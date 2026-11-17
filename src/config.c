@@ -60,6 +60,7 @@ void config_set_defaults(app_config_t *cfg) {
     cfg->wifi_keepalive = true;
     cfg->latest_frame = false;
     cfg->present_late_us = 33000;
+    cfg->exit_on_home = false;
 }
 
 void config_ensure_dir(const char *dir) {
@@ -235,6 +236,8 @@ int config_load(app_config_t *cfg, const char *dir) {
             snprintf(cfg->host_uuid, sizeof(cfg->host_uuid), "%s", val);
         else if (!strcmp(key, "host_name"))
             snprintf(cfg->host_name, sizeof(cfg->host_name), "%s", val);
+        else if (!strcmp(key, "exit_on_home"))
+            cfg->exit_on_home = parse_bool(val);
         else
             LOGW("config: clave desconocida '%s'", key);
     }
@@ -329,7 +332,8 @@ int config_save(const app_config_t *cfg, const char *dir) {
             "latest_frame = %s\n"
             "present_late_us = %d\n"
             "host_uuid = %s\n"
-            "host_name = %s\n",
+            "host_name = %s\n"
+            "exit_on_home = %s\n",
             cfg->host, (unsigned)cfg->http_port, cfg->app_name,
             cfg->last_app,cfg->reduced_motion?"true":"false",cfg->controller_deadzone,cfg->swap_face_buttons?"true":"false",cfg->debug_host,
             cfg->stream.width, cfg->stream.height, cfg->stream.fps, cfg->stream.bitrate,
@@ -359,7 +363,8 @@ int config_save(const app_config_t *cfg, const char *dir) {
             cfg->wifi_keepalive ? "true" : "false",
             cfg->latest_frame ? "true" : "false",
             cfg->present_late_us,
-            cfg->host_uuid, cfg->host_name);
+            cfg->host_uuid, cfg->host_name,
+            cfg->exit_on_home ? "true" : "false");
     int failed=ferror(f);
     if(fclose(f)!=0)failed=1;
     char destination[512];snprintf(destination,sizeof(destination),"%s/moonlight.ini",dir);

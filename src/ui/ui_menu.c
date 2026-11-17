@@ -20,6 +20,7 @@
 
 #ifdef __ORBIS__
 #include <orbis/SystemService.h>
+#include "../orbis/sys_status.h"
 #endif
 
 #define UI_W 1920
@@ -300,7 +301,7 @@ enum {
     SET_SWAP_FACE,
     SET_SURROUND,SET_TOUCHPAD_MOUSE,SET_GYRO,SET_TITLE_MOTION,SET_EXIT,
     SET_TOUCH_CLICK,SET_FRAME_PACING,SET_WIFI_KEEPALIVE,
-    SET_VDISPLAY,SET_VD_SCALE,SET_DEVICE_NAME,SET_WAKE_PC,
+    SET_VDISPLAY,SET_VD_SCALE,SET_DEVICE_NAME,SET_WAKE_PC,SET_EXIT_ON_HOME,
     SET_COUNT,
 };
 
@@ -323,7 +324,7 @@ static const char *k_set_names[SET_COUNT] = {
     "Swap Cross / Circle",
     "5.1 surround (HDMI)","Touchpad mouse","Motion input","Motion for selected game","Exit Moonlight",
     "Touchpad click","Frame pacing","Wi-Fi keep-alive",
-    "Virtual display","Display scaling","Device name","Wake PC",
+    "Virtual display","Display scaling","Device name","Wake PC","Exit on PS4 home",
 };
 
 /* Device names offered in Settings (any other name can be set in the INI).
@@ -350,7 +351,7 @@ static const settings_group_t setting_groups[]={
     {"Controller",6,{SET_DEADZONE,SET_SWAP_FACE,SET_TOUCH_CLICK,SET_TOUCHPAD_MOUSE,SET_GYRO,SET_TITLE_MOTION}},
     {"Advanced",8,{SET_THEME,SET_REDUCED,SET_PREFER_HW,SET_SHOW_STATS,SET_FILE_LOG,SET_DECODE_MODE,SET_SOPS,SET_PREFER_YCBCR}},
     {"Apollo",3,{SET_VDISPLAY,SET_VD_SCALE,SET_DEVICE_NAME}},
-    {"Exit",1,{SET_EXIT}}
+    {"Exit",2,{SET_EXIT,SET_EXIT_ON_HOME}}
 };
 #define SETTING_GROUPS 7
 
@@ -705,6 +706,7 @@ static void set_value_str(const ui_state_t *st, int row, char *out, size_t cap) 
     case SET_VD_SCALE:snprintf(out,cap,"%d%%",c->vd_scale);break;
     case SET_DEVICE_NAME:snprintf(out,cap,"%s",c->device_name);break;
     case SET_WAKE_PC:snprintf(out,cap,"%s",c->wol_mac[0]?c->wol_mac:"Connect once first");break;
+    case SET_EXIT_ON_HOME:snprintf(out,cap,"%s",c->exit_on_home?"On":"Off");break;
     case SET_REDUCED: snprintf(out,cap,"%s",c->reduced_motion?"On":"Off");break;
     case SET_DEADZONE: snprintf(out,cap,"%d%%",c->controller_deadzone);break;
     case SET_SWAP_FACE: snprintf(out,cap,"%s",c->swap_face_buttons?"On":"Off");break;
@@ -924,6 +926,7 @@ static void settings_input(ui_state_t *st, unsigned pr) {
             snprintf(st->notice,sizeof(st->notice),"Could not send the wake packet. Check the console network.");
         }
         break;
+    case SET_EXIT_ON_HOME:c->exit_on_home=!c->exit_on_home;break;
     case SET_TOUCH_CLICK:
         c->touchpad_click=(c->touchpad_click+(dir?dir:1)+TOUCH_CLICK_COUNT)%TOUCH_CLICK_COUNT;
         break;
@@ -1075,7 +1078,8 @@ static void draw_settings(ui_state_t *st, ui_surface_t *s) {
         [SET_VDISPLAY]={"Apollo creates a monitor at the stream's","resolution and FPS. Sunshine ignores it."},
         [SET_VD_SCALE]={"Windows scaling of the virtual monitor.","100% suits a TV at 1080p."},
         [SET_DEVICE_NAME]={"Name sent to Apollo when pairing.","Rename old pairings in Apollo's web UI."},
-        [SET_WAKE_PC]={"Press X to send Wake-on-LAN to your PC.","The MAC is learned when you connect."}
+        [SET_WAKE_PC]={"Press X to send Wake-on-LAN to your PC.","The MAC is learned when you connect."},
+        [SET_EXIT_ON_HOME]={"Pressing PS closes Moonlight cleanly,","so closing from the home shows no error."}
     };
     ui_label_fit(s,1290,300,34,0,COL_TEXT,k_set_names[setting],530);
     if(help[setting][0])ui_label_fit(s,1290,382,24,0,COL_DIM,help[setting][0],530);
@@ -1317,6 +1321,28 @@ int ui_menu_run(app_config_t *cfg, gs_server_t *server, const char *config_dir) 
         } else if (!strcmp(st.notice, "Connect a DualShock 4 to continue.")) {
             st.notice[0] = 0; dirty = 1;
         }
+
+#ifdef __ORBIS__
+        /* "Exit on PS4 home": leave the clean way as soon as the PS4 home
+         * comes to the front, so a later close from there finds no app
+         * (closing from the system shows CE-34878-0). */
+        if (st.cfg->exit_on_home) {
+            static unsigned home_tick;
+            static int home_hits;
+            if (++home_tick % 6 == 0) {
+                if (sys_status_backgrounded() == 1) {
+                    if (++home_hits >= 2) {
+                        home_hits = 0;
+                        LOGI("ui: PS4 home opened; exiting (exit_on_home)");
+                        st.result = UI_MENU_EXIT;
+                        break;
+                    }
+                } else {
+                    home_hits = 0;
+                }
+            }
+        }
+#endif
 
         if (grace > 0) {
             grace--;

@@ -63,3 +63,10 @@ New INI keys: `device_name`, `virtual_display`, `vd_scale`, `touchpad_click`,
   in front. Closing the app from the home then kills an idle process
   (`sys_status.c`, `sceSystemServiceGetStatus`).
 - **Exit Moonlight** row in the stream menu (L3 + R3).
+
+## 1.4.5
+- **Exit on PS4 home** (Settings -> Exit, default off): when the PS4 home comes
+  to the front (stream or library), Moonlight exits the clean way
+  (`LoadExec("exit")`). Closing from the system kills the process and is
+  reported as CE-34878-0 even with the stream fully stopped (1.4.4 field log),
+  so this is the only reliable way to avoid that dialog.

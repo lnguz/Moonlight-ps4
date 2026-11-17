@@ -63,6 +63,7 @@ typedef struct {
     int present_late_us;    // frames older than this are decoded, not shown
     char host_uuid[64];     // saved PC's <uniqueid>, finds it after an IP change
     char host_name[64];     // saved PC's <hostname> (fallback identity)
+    bool exit_on_home;      // PS button -> leave cleanly (no CE-34878-0 on close)
 } app_config_t;
 
 /* What the physical touchpad click sends to the host. */

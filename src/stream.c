@@ -1014,8 +1014,13 @@ restart:
                 if (sys_status_backgrounded() == 1) {
                     if (++bg_hits >= 2) {
                         bg_hits = 0;
-                        LOGI("stream: PS4 home opened; stopping the stream");
-                        s_bg_pause = 1;
+                        if (cfg->exit_on_home) {
+                            LOGI("stream: PS4 home opened; exiting (exit_on_home)");
+                            s_exit_after_stream = 1;
+                        } else {
+                            LOGI("stream: PS4 home opened; stopping the stream");
+                            s_bg_pause = 1;
+                        }
                         if (qm_is_open()) {
                             qm_close(NULL, NULL);
                             input_quick_menu_disengage();
