@@ -256,6 +256,15 @@ int config_load(app_config_t *cfg, const char *dir) {
         cfg->dec_pipeline_depth = 2;
         cfg->dec_au_onion = true;
     }
+    /* Rev 4 (Apollo fork 1.4.4): field logs showed "Low latency" (depth 1)
+     * waiting for the hardware on every frame: 17-18 ms per 1080p frame at
+     * 50 Mbps, over the 16.7 ms budget, while Balanced overlaps the work
+     * (~4 ms measured upstream). Move such installs to Balanced once; the
+     * Settings choice is respected again from then on. */
+    if (cfg_rev < 4 && cfg->dec_pipeline_depth < 2) {
+        LOGW("config: rev %d < 4; decode mode Low latency -> Balanced", cfg_rev);
+        cfg->dec_pipeline_depth = 2;
+    }
 
     LOGI("config: host=%s app=%s debug=%s %dx%d@%d br=%d pkt=%d hw=%d ycbcr=%d file_log=%d",
          cfg->host, cfg->app_name, cfg->debug_host,
@@ -276,7 +285,7 @@ int config_save(const app_config_t *cfg, const char *dir) {
     }
     fprintf(f,
             "# moonlight-ps4\n"
-            "cfg_rev = 3\n"
+            "cfg_rev = 4\n"
             "host = %s\n"
             "http_port = %u\n"
             "app = %s\n"

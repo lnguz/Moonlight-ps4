@@ -96,6 +96,7 @@ if(PS4)
         src/stream.c
         src/ports/ps4_entropy.c
         src/orbis/net_orbis.c
+        src/orbis/sys_status.c
         src/orbis/videodec2_loader.c
         src/audio/audio_orbis.c
         src/video/video_stats.c

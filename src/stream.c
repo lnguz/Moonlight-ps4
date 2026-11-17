@@ -16,6 +16,9 @@
 #include "ui/ui_draw.h"
 #include "ui/ui_theme.h"
 #include "ui/quick_menu.h"
+#ifdef __ORBIS__
+#include "orbis/sys_status.h"
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -40,6 +43,30 @@ static char handshake_error[160];
  * OPTIONS over a running game) and the client lands back in the menu.
  * The Moonlight app itself keeps running. */
 static int s_quit_app_after_stream;
+static int s_exit_after_stream; /* quick menu "Exit Moonlight" */
+static int s_bg_pause;          /* PS4 home opened: stream parked */
+
+#ifdef __ORBIS__
+/* While the PS4 home screen is in front, keep nothing running: closing the
+ * app from there kills the process, and killing it mid-stream (hardware
+ * decoder + audio busy) is reported by the system as an app crash. Wait
+ * here, stream stopped, until Moonlight is back in front. */
+static void stream_wait_foreground(void) {
+    LOGI("stream: parked while the PS4 home is open");
+    int seen_front = 0;
+    for (;;) {
+        int bg = sys_status_backgrounded();
+        if (bg == 0) {
+            if (++seen_front >= 2)
+                break;
+        } else {
+            seen_front = 0;
+        }
+        usleep(100000);
+    }
+    LOGI("stream: back in front; resuming");
+}
+#endif
 
 /* connection/decoder/audio callbacks at file scope - reconnect
  * attempts (stream_reconnect, after a mid-stream drop) call
@@ -958,6 +985,13 @@ restart:
                         LOGI("quick menu: quit stream");
                         input_request_quit();
                         break;
+                    case QM_ACT_EXIT_APP:
+                        qm_close(NULL, NULL);
+                        input_quick_menu_disengage();
+                        LOGI("quick menu: exit Moonlight");
+                        s_exit_after_stream = 1;
+                        input_request_quit();
+                        break;
                     case QM_ACT_QUIT_APP:
                         qm_close(NULL, NULL);
                         input_quick_menu_disengage();
@@ -973,6 +1007,26 @@ restart:
                 }
             }
 
+#ifdef __ORBIS__
+            /* PS button -> home: park the stream (see stream_wait_foreground). */
+            if (ticks % 25 == 0 && s_connected) {
+                static int bg_hits;
+                if (sys_status_backgrounded() == 1) {
+                    if (++bg_hits >= 2) {
+                        bg_hits = 0;
+                        LOGI("stream: PS4 home opened; stopping the stream");
+                        s_bg_pause = 1;
+                        if (qm_is_open()) {
+                            qm_close(NULL, NULL);
+                            input_quick_menu_disengage();
+                        }
+                        input_request_quit();
+                    }
+                } else {
+                    bg_hits = 0;
+                }
+            }
+#endif
             if (++ticks % 250 == 0) {
                 video_stats_t st;
                 video_take_stats(&st);
@@ -1054,6 +1108,19 @@ restart:
             return 0;
         }
 
+#ifdef __ORBIS__
+        if (s_bg_pause) {
+            s_bg_pause = 0;
+            s_quit_app_after_stream = 0;
+            stream_wait_foreground();
+            if (stream_reconnect(cfg, app_id, display) != 0) {
+                ui_menu_set_notice("Connection lost.");
+                return -1;
+            }
+            continue;
+        }
+#endif
+
         /* quick-menu bitrate change - relaunch the session with the
          * new value through the reconnect ladder (animated screens, three
          * attempts, X-to-retry). The game keeps running on the host, so
@@ -1132,6 +1199,10 @@ int stream_run(app_config_t *cfg, const char *config_dir) {
         input_reset();
         int rc = stream_play(cfg, config_dir);
         LOGI("stream_play => %d (autostart)", rc);
+        if (s_exit_after_stream) {
+            input_shutdown();
+            return 0;
+        }
         if (rc == -2) {
             ui_menu_set_notice("Auto-start cancelled.");
         } else if (rc < 0) {
@@ -1166,6 +1237,10 @@ int stream_run(app_config_t *cfg, const char *config_dir) {
                 LOGI("reconnect-launch: '%s' after reconnect", cfg->app_name);
                 int rc = stream_play(cfg, config_dir);
                 LOGI("stream_play => %d (reconnect-launch)", rc);
+                if (s_exit_after_stream) {
+                    input_shutdown();
+                    return 0;
+                }
                 if (rc == -2) {
                     ui_menu_set_notice("Launch cancelled.");
                 } else if (rc < 0) {
@@ -1186,6 +1261,11 @@ int stream_run(app_config_t *cfg, const char *config_dir) {
 
         int rc = stream_play(cfg, config_dir);
         LOGI("stream_play => %d", rc);
+        if (s_exit_after_stream) {
+            LOGI("stream: exit requested from the stream menu; leaving cleanly");
+            input_shutdown();
+            return 0;
+        }
         if (rc == -2) {
             ui_menu_set_notice("Launch cancelled.");
         } else if (rc < 0) {

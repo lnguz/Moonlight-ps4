@@ -17,6 +17,9 @@ typedef enum {
     QM_ACT_QUIT_APP,        /* X on "Quit app on PC": close the app on the
                              * host (same /cancel as the app-list OPTIONS),
                              * then back to the client menu */
+    QM_ACT_EXIT_APP,        /* X on "Exit Moonlight": stop the stream and
+                             * leave to the PS4 home the clean way (the PS
+                             * button > Close path shows a crash report) */
     QM_ACT_SERVER_CMD,      /* X on a PC command: run it (index from
                              * qm_selected_server_cmd()); menu stays open */
 } qm_action_t;
@@ -38,7 +41,8 @@ typedef enum {
 #define QM_ROW_COMMANDS  3 /* opens the Apollo PC command list */
 #define QM_ROW_QUIT      4
 #define QM_ROW_QUIT_APP  5
-#define QM_ROW_COUNT     6
+#define QM_ROW_EXIT_APP  6 /* exit Moonlight to the PS4 home */
+#define QM_ROW_COUNT     7
 
 typedef struct {
     int open;            /* menu visible */

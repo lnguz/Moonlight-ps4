@@ -50,3 +50,16 @@ New INI keys: `device_name`, `virtual_display`, `vd_scale`, `touchpad_click`,
   (`host_uuid`, `host_name`). When the saved address stops answering, the 128
   nearest addresses are probed in parallel and the same PC is followed to its
   new address automatically.
+
+## 1.4.4
+- **Decoder-bound scenes**: never more than 33 ms without showing a frame,
+  even when a newer one is always queued (the 1.4.3 rule still hid every
+  frame at 50 Mbps). Same guard in "Lowest latency" mode.
+- **Decode mode**: installs on "Low latency" (depth 1) move to Balanced once
+  (`cfg_rev = 4`). Depth 1 waits for the hardware on every frame (17-18 ms per
+  frame at 50 Mbps); Balanced overlaps it.
+- **PS button**: when the PS4 home comes to the front during a stream, the
+  stream stops (decoder and audio released) and resumes when Moonlight is back
+  in front. Closing the app from the home then kills an idle process
+  (`sys_status.c`, `sceSystemServiceGetStatus`).
+- **Exit Moonlight** row in the stream menu (L3 + R3).

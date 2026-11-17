@@ -119,6 +119,8 @@ static qm_action_t qm_input_locked(unsigned pressed) {
             return QM_ACT_QUIT;
         case QM_ROW_QUIT_APP:
             return QM_ACT_QUIT_APP;
+        case QM_ROW_EXIT_APP:
+            return QM_ACT_EXIT_APP;
         default:
             break; /* bitrate row handled above */
         }

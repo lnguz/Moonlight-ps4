@@ -90,10 +90,18 @@ static unsigned s_diag_newer_drops;
  * scenes, ~15-20 ms at 25-50 Mbps), EVERY frame ends up late, and hiding
  * them all froze the picture at 1-2 fps (field logs, 1.4.2). The newest
  * frame is always shown, late or not. */
+static uint64_t s_last_show_us; /* last frame handed to the presenter */
+
 static int frame_is_late(const DECODE_UNIT *du, uint64_t now) {
-    return s_late_us && du->enqueueTimeUs && now >= du->enqueueTimeUs &&
-           now - du->enqueueTimeUs > s_late_us &&
-           LiGetPendingVideoFrames() > 0;
+    if (!s_late_us || !du->enqueueTimeUs || now < du->enqueueTimeUs ||
+        now - du->enqueueTimeUs <= s_late_us)
+        return 0;
+    /* Decoder-bound (1.4.3 field logs, 50 Mbps): a newer frame is ALWAYS
+     * queued, so "hide when superseded" alone still hid every frame.
+     * Never go longer than s_late_us without putting a picture up. */
+    if (!s_last_show_us || now - s_last_show_us >= s_late_us)
+        return 0;
+    return LiGetPendingVideoFrames() > 0;
 }
 
 static uint8_t s_sps_scratch[256];
@@ -545,6 +553,7 @@ static int dr_setup(int videoFormat, int width, int height, int redrawRate,
     s_diag_host_latency = 0;
     s_diag_host_samples = 0;
     s_diag_last_frame = 0;
+    s_last_show_us = 0;
     s_logged_sample = 0;
     s_logged_au = 0;
     video_reset_stats();
@@ -654,7 +663,8 @@ static int dr_submit_impl(PDECODE_UNIT du) {
     }
     /* Latest-frame mode: a newer frame is already waiting, so showing this
      * one would only put an older picture on screen. Decode it anyway. */
-    if (!skip_present && s_latest_frame && LiGetPendingVideoFrames() > 0) {
+    if (!skip_present && s_latest_frame && LiGetPendingVideoFrames() > 0 &&
+        s_last_show_us && queue_now - s_last_show_us < 33000) {
         skip_present = 1;
         s_diag_newer_drops++;
     }
@@ -839,9 +849,11 @@ static int dr_submit_impl(PDECODE_UNIT du) {
         /* An old frame with nothing newer queued is still the freshest
          * picture we have: show it, but only into an already free buffer
          * (short bounded wait) instead of dropping it. */
-        if(!wait_limit && LiGetPendingVideoFrames()==0)
+        if(!wait_limit && (LiGetPendingVideoFrames()==0 ||
+                           !s_last_show_us || kick_now-s_last_show_us>=s_late_us))
             wait_limit=2000;
         if(wait_limit) {
+            s_last_show_us=kick_now;
             (void)video_present_bgra_pipe_kick(src,uv,pitch_y,pitch_uv,
                                                disp_w,disp_h,wait_limit);
         } else {
@@ -852,6 +864,7 @@ static int dr_submit_impl(PDECODE_UNIT du) {
     } else {
         /* YCbCr blit path: keep the padded h (nv12 layout). */
         video_present_frame_nv12_copy(src, nbytes, pitch_y, pitch_uv, w, h);
+        s_last_show_us = LiGetMicroseconds();
     }
     if (tc1 > tc0)
         video_stats_add_bounce(tc1 - tc0);
