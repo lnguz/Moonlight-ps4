@@ -79,6 +79,17 @@ static int s_diag_last_frame;
 static int s_logged_sample;
 static int s_logged_au;
 
+/* Presentation policy (video_orbis_set_present_policy). */
+static int s_latest_frame;
+static uint64_t s_late_us = 33000;
+static unsigned s_diag_newer_drops;
+
+/* A frame "is late" once it waited more than s_late_us in our queue. */
+static int frame_is_late(const DECODE_UNIT *du, uint64_t now) {
+    return s_late_us && du->enqueueTimeUs && now >= du->enqueueTimeUs &&
+           now - du->enqueueTimeUs > s_late_us;
+}
+
 static uint8_t s_sps_scratch[256];
 
 typedef struct {
@@ -524,6 +535,7 @@ static int dr_setup(int videoFormat, int width, int height, int redrawRate,
     s_diag_flush = s_diag_finish = 0;
     s_diag_count = s_diag_gaps = 0;
     s_diag_backlog_drops = s_diag_queue_drops = 0;
+    s_diag_newer_drops = 0;
     s_diag_host_latency = 0;
     s_diag_host_samples = 0;
     s_diag_last_frame = 0;
@@ -630,10 +642,15 @@ static int dr_submit_impl(PDECODE_UNIT du) {
      * frames that actually waited too long in our decoder queue, using the
      * same monotonic clock as Moonlight's enqueue timestamp. */
     uint64_t queue_now = LiGetMicroseconds();
-    if (du->enqueueTimeUs && queue_now >= du->enqueueTimeUs &&
-        queue_now - du->enqueueTimeUs > 33000) {
+    if (!skip_present && frame_is_late(du, queue_now)) {
         skip_present = 1;
         s_diag_queue_drops++;
+    }
+    /* Latest-frame mode: a newer frame is already waiting, so showing this
+     * one would only put an older picture on screen. Decode it anyway. */
+    if (!skip_present && s_latest_frame && LiGetPendingVideoFrames() > 0) {
+        skip_present = 1;
+        s_diag_newer_drops++;
     }
 
     /* Next AU slot: with depth > 1 the Vdec worker may still be parsing the
@@ -723,8 +740,7 @@ static int dr_submit_impl(PDECODE_UNIT du) {
     /* Keep H.264 reference decoding intact, but recheck freshness after
      * Decode: a frame may age while the hardware callback is running. */
     uint64_t after_decode=LiGetMicroseconds();
-    if(!skip_present&&du->enqueueTimeUs&&after_decode>=du->enqueueTimeUs&&
-       after_decode-du->enqueueTimeUs>33000) {
+    if(!skip_present&&frame_is_late(du,after_decode)) {
         skip_present=1;s_diag_queue_drops++;
     }
 
@@ -859,8 +875,8 @@ static int dr_submit(PDECODE_UNIT du) {
              s_diag_total / divisor, s_diag_flush / divisor,
              s_diag_finish / divisor, s_diag_assembly / divisor,
              s_diag_queue / divisor, s_diag_gaps, s_diag_last_frame, s_diag_count);
-        LOGI("pipeline drops backlog=%u stale_queue=%u host_processing=%.2fms host_samples=%u",
-             s_diag_backlog_drops, s_diag_queue_drops,
+        LOGI("pipeline drops backlog=%u stale_queue=%u newer_queued=%u host_processing=%.2fms host_samples=%u",
+             s_diag_backlog_drops, s_diag_queue_drops, s_diag_newer_drops,
              s_diag_host_samples ? (double)s_diag_host_latency / (s_diag_host_samples * 10.0) : 0.0,
              s_diag_host_samples);
         s_diag_start = end;
@@ -868,6 +884,7 @@ static int dr_submit(PDECODE_UNIT du) {
         s_diag_assembly = s_diag_queue = 0;
         s_diag_count = s_diag_gaps = 0;
         s_diag_backlog_drops = s_diag_queue_drops = 0;
+        s_diag_newer_drops = 0;
         s_diag_host_latency = 0;
         s_diag_host_samples = 0;
     }
@@ -887,6 +904,13 @@ void video_orbis_set_tuning(int pipeline_depth, int thread_prio,
     LOGI("orbis: tuning depth=%d prio=%d au=%s fb=%s",
          s_tune_depth, s_tune_prio, s_tune_au_onion ? "ONION" : "Garlic",
          s_tune_fb_garlic ? "WC_GARLIC" : "auto");
+}
+
+void video_orbis_set_present_policy(int latest_frame, int late_us) {
+    s_latest_frame = latest_frame ? 1 : 0;
+    s_late_us = late_us > 0 ? (uint64_t)late_us : 0;
+    LOGI("orbis: present policy latest_frame=%d late_us=%llu",
+         s_latest_frame, (unsigned long long)s_late_us);
 }
 
 DECODER_RENDERER_CALLBACKS video_callbacks_orbis = {

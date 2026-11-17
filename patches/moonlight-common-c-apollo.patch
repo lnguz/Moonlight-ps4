@@ -1,0 +1,75 @@
+--- a/src/ControlStream.c
++++ b/src/ControlStream.c
+@@ -140,6 +140,7 @@
+ #define IDX_SET_MOTION_EVENT 10
+ #define IDX_SET_RGB_LED 11
+ #define IDX_DS_ADAPTIVE_TRIGGERS 12
++#define IDX_EXEC_SERVER_CMD 13
+ 
+ #define CONTROL_STREAM_TIMEOUT_SEC 10
+ #define CONTROL_STREAM_LINGER_TIMEOUT_SEC 2
+@@ -214,6 +215,7 @@
+     0x5501, // Set motion event (Sunshine protocol extension)
+     0x5502, // Set RGB LED (Sunshine protocol extension)
+     0x5503, // Set Adaptive Triggers (Sunshine protocol extension)
++    0x3000, // Execute Server Command (Apollo protocol extension)
+ };
+ 
+ static const char requestIdrFrameGen3[] = { 0, 0 };
+@@ -2084,3 +2086,39 @@
+     *metadata = hdrMetadata;
+     return true;
+ }
++
++// moonlight-ps4: run one of the host's server commands (Apollo protocol
++// extension 0x3000). cmdId is the index into the ServerCommand list that
++// Apollo publishes in /serverinfo for clients with the server_cmd permission.
++// Plain Sunshine has no handler for this type and ignores it.
++int LiSendExecServerCmd(uint8_t cmdId) {
++    uint8_t payload[4] = { cmdId, 0, 0, 0 };
++
++    // Only the Sunshine encrypted table (Gen7Enc) carries the 0x3000 slot.
++    if (!IS_SUNSHINE() || packetTypes != (short*)packetTypesGen7Enc) {
++        return -2;
++    }
++
++    return sendMessageAndForget(packetTypes[IDX_EXEC_SERVER_CMD],
++                                sizeof(payload), payload,
++                                CTRL_CHANNEL_GENERIC,
++                                ENET_PACKET_FLAG_RELIABLE,
++                                false) ? 0 : -1;
++}
++
++// moonlight-ps4: tiny unreliable control packet that keeps the client's
++// Wi-Fi radio out of power save between input events (same idea as
++// Artemis' "prevent packet loss" option). It reuses the periodic ping
++// type (0x0200), which both Sunshine and Apollo accept and ignore.
++int LiSendKeepAlivePing(void) {
++    static const uint8_t payload[8] = { 0 };
++
++    if (!IS_SUNSHINE() || peer == NULL) {
++        return -2;
++    }
++
++    return sendMessageAndForget(0x0200, sizeof(payload), payload,
++                                CTRL_CHANNEL_GENERIC,
++                                ENET_PACKET_FLAG_UNSEQUENCED,
++                                false) ? 0 : -1;
++}
+--- a/src/Limelight.h
++++ b/src/Limelight.h
+@@ -863,6 +863,14 @@
+ // if CAPABILITY_DIRECT_SUBMIT is not set for the video renderer.
+ int LiGetPendingVideoFrames(void);
+ 
++// moonlight-ps4 (Apollo extensions). LiSendExecServerCmd() asks the host to
++// run server command number cmdId (index into /serverinfo ServerCommand).
++// LiSendKeepAlivePing() sends one small unreliable control packet; call it
++// every ~20 ms to keep a power-saving Wi-Fi link awake. Both return 0 on
++// success and a negative value when unsupported or not connected.
++int LiSendExecServerCmd(uint8_t cmdId);
++int LiSendKeepAlivePing(void);
++
+ // Returns the number of queued audio frames ready for delivery. Only relevant
+ // if CAPABILITY_DIRECT_SUBMIT is not set for the audio renderer. For most uses,
+ // LiGetPendingAudioDuration() is probably a better option than this function.

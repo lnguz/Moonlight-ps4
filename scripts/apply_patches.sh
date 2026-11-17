@@ -38,6 +38,13 @@ apply_one \
     "$PATCH_DIR/moonlight-common-c-orbis.patch" \
     "moonlight-common-c Orbis"
 
+# Apollo protocol extensions (server commands, Wi-Fi keep-alive ping).
+# Applied on top of the Orbis patch; touches different hunks.
+apply_one \
+    "$REPO_DIR/third_party/moonlight-common-c" \
+    "$PATCH_DIR/moonlight-common-c-apollo.patch" \
+    "moonlight-common-c Apollo"
+
 apply_one \
     "$REPO_DIR/third_party/moonlight-common-c/enet" \
     "$PATCH_DIR/moonlight-common-c-enet-orbis.patch" \

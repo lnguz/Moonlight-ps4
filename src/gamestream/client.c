@@ -179,6 +179,65 @@ int gs_mac_from_field(const char *raw, char *out, size_t cap) {
     return 0;
 }
 
+static char s_device_name[GS_DEVICE_NAME_LEN] = "PS4";
+static bool s_launch_vdisplay = false;
+static int s_launch_scale = 100;
+
+void gs_set_device_name(const char *name) {
+    size_t o = 0;
+    if (name) {
+        for (const char *p = name; *p && o < sizeof(s_device_name) - 1; p++) {
+            char c = *p;
+            int ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                     (c >= '0' && c <= '9') || c == '-' || c == '_';
+            s_device_name[o++] = ok ? c : '-';
+        }
+    }
+    s_device_name[o] = 0;
+    if (!o)
+        snprintf(s_device_name, sizeof(s_device_name), "PS4");
+}
+
+const char *gs_get_device_name(void) {
+    return s_device_name;
+}
+
+void gs_set_launch_options(bool virtual_display, int scale_percent) {
+    s_launch_vdisplay = virtual_display;
+    if (scale_percent < 50 || scale_percent > 300)
+        scale_percent = 100;
+    s_launch_scale = scale_percent;
+}
+
+/* Apollo-only serverinfo fields (HTTPS, paired clients). Leaves the
+ * Apollo state untouched for plain-HTTP responses, which never carry it. */
+static void parse_apollo_fields(gs_server_t *server, const char *body, size_t len) {
+    char *perm = NULL, *vd = NULL, *vdr = NULL;
+    server->isApollo = false;
+    server->vdisplayCapable = false;
+    server->vdisplayReady = false;
+    server->permission = 0;
+    server->serverCmdCount = 0;
+    if (xml_search(body, len, "Permission", &perm) == GS_OK && perm && perm[0]) {
+        server->isApollo = true;
+        server->permission = (unsigned)strtoul(perm, NULL, 10);
+    }
+    if (xml_search(body, len, "VirtualDisplayCapable", &vd) == GS_OK && vd)
+        server->vdisplayCapable = !strcmp(vd, "true") || !strcmp(vd, "1");
+    if (xml_search(body, len, "VirtualDisplayDriverReady", &vdr) == GS_OK && vdr)
+        server->vdisplayReady = !strcmp(vdr, "true") || !strcmp(vdr, "1");
+    server->serverCmdCount = xml_search_all(body, len, "ServerCommand",
+                                            &server->serverCmds[0][0],
+                                            GS_MAX_SERVER_CMDS, GS_SERVER_CMD_LEN);
+    if (server->isApollo)
+        LOGI("serverinfo: Apollo perm=0x%x vdisplay=%d ready=%d server_cmds=%d",
+             server->permission, server->vdisplayCapable, server->vdisplayReady,
+             server->serverCmdCount);
+    free(perm);
+    free(vd);
+    free(vdr);
+}
+
 static int load_serverinfo(gs_server_t *server, bool https) {
     char uuid[37];
     http_resp_t resp;
@@ -221,6 +280,9 @@ static int load_serverinfo(gs_server_t *server, bool https) {
         if (gs_mac_from_field(mac, norm, sizeof(norm)) == 0)
             snprintf(server->host_mac, sizeof(server->host_mac), "%s", norm);
     }
+
+    if (https)
+        parse_apollo_fields(server, resp.body, resp.len);
 
     server->paired = !strcmp(paired, "1");
     server->currentGame = atoi(currentGame);
@@ -333,9 +395,9 @@ int gs_pair_ex(gs_server_t *server, const char *pin, unsigned timeout_ms) {
 
     uuid_v4(id, uuid);
     ret = api_get_t(server, 0, &resp, timeout_ms,
-                  "/pair?uniqueid=%s&uuid=%s&devicename=roth&updateState=1"
+                  "/pair?uniqueid=%s&uuid=%s&devicename=%s&updateState=1"
                   "&phrase=getservercert&salt=%s&clientcert=%s",
-                  GS_UNIQUEID, uuid, salt_hex, id->cert_hex);
+                  GS_UNIQUEID, uuid, s_device_name, salt_hex, id->cert_hex);
     if (ret != GS_OK) {
         LOGE("pairing: phase 1 http FAIL ret=%d %s", ret, gs_error ? gs_error : "");
         return ret;
@@ -394,9 +456,9 @@ int gs_pair_ex(gs_server_t *server, const char *pin, unsigned timeout_ms) {
 
     uuid_v4(id, uuid);
     ret = api_get_t(server, 0, &resp, timeout_ms,
-                  "/pair?uniqueid=%s&uuid=%s&devicename=roth&updateState=1"
+                  "/pair?uniqueid=%s&uuid=%s&devicename=%s&updateState=1"
                   "&clientchallenge=%s",
-                  GS_UNIQUEID, uuid, challenge_hex);
+                  GS_UNIQUEID, uuid, s_device_name, challenge_hex);
     if (ret != GS_OK)
         goto fail;
 
@@ -467,9 +529,9 @@ int gs_pair_ex(gs_server_t *server, const char *pin, unsigned timeout_ms) {
 
     uuid_v4(id, uuid);
     ret = api_get_t(server, 0, &resp, timeout_ms,
-                  "/pair?uniqueid=%s&uuid=%s&devicename=roth&updateState=1"
+                  "/pair?uniqueid=%s&uuid=%s&devicename=%s&updateState=1"
                   "&serverchallengeresp=%s",
-                  GS_UNIQUEID, uuid, cr_hex);
+                  GS_UNIQUEID, uuid, s_device_name, cr_hex);
     if (ret != GS_OK)
         goto fail;
 
@@ -528,9 +590,9 @@ int gs_pair_ex(gs_server_t *server, const char *pin, unsigned timeout_ms) {
 
     uuid_v4(id, uuid);
     ret = api_get_t(server, 0, &resp, timeout_ms,
-                  "/pair?uniqueid=%s&uuid=%s&devicename=roth&updateState=1"
+                  "/pair?uniqueid=%s&uuid=%s&devicename=%s&updateState=1"
                   "&clientpairingsecret=%s",
-                  GS_UNIQUEID, uuid, cps_hex);
+                  GS_UNIQUEID, uuid, s_device_name, cps_hex);
     if (ret != GS_OK)
         goto fail;
     if ((ret = check_paired(&resp)) != GS_OK)
@@ -542,9 +604,9 @@ int gs_pair_ex(gs_server_t *server, const char *pin, unsigned timeout_ms) {
     // --- HTTPS confirmation with client certificate
     uuid_v4(id, uuid);
     ret = api_get_t(server, 1, &resp, timeout_ms,
-                  "/pair?uniqueid=%s&uuid=%s&devicename=roth&updateState=1"
+                  "/pair?uniqueid=%s&uuid=%s&devicename=%s&updateState=1"
                   "&phrase=pairchallenge",
-                  GS_UNIQUEID, uuid);
+                  GS_UNIQUEID, uuid, s_device_name);
     if (ret != GS_OK)
         goto fail;
     if ((ret = check_paired(&resp)) != GS_OK)
@@ -693,14 +755,18 @@ int gs_start_app(gs_server_t *server, STREAM_CONFIGURATION *config, int appId,
                   "/%s?uniqueid=%s&uuid=%s&appid=%d&mode=%dx%dx%d"
                   "&additionalStates=1&sops=%d&rikey=%s&rikeyid=%u"
                   "&localAudioPlayMode=%d&surroundAudioInfo=%d"
-                  "&remoteControllersBitmap=%d&gcmap=%d%s",
+                  "&remoteControllersBitmap=%d&gcmap=%d"
+                  "&virtualDisplay=%d&scaleFactor=%d%s",
                   server->currentGame ? "resume" : "launch",
                   GS_UNIQUEID, uuid, appId,
                   config->width, config->height, fps,
                   sops ? 1 : 0, rikey_hex, (unsigned)rikeyid,
                   localaudio ? 1 : 0, surround_info,
                   gamepad_mask, gamepad_mask,
+                  s_launch_vdisplay ? 1 : 0, s_launch_scale,
                   LiGetLaunchUrlQueryParameters());
+    LOGI("launch: virtualDisplay=%d scaleFactor=%d device=%s",
+         s_launch_vdisplay ? 1 : 0, s_launch_scale, s_device_name);
     if (ret != GS_OK) {
         /* Non-200 (or transport error). A body means the host EXPLAINED
          * itself (Sunshine: "app is locked", "not available", a PIN

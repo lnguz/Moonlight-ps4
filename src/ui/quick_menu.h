@@ -17,7 +17,13 @@ typedef enum {
     QM_ACT_QUIT_APP,        /* X on "Quit app on PC": close the app on the
                              * host (same /cancel as the app-list OPTIONS),
                              * then back to the client menu */
+    QM_ACT_SERVER_CMD,      /* X on a PC command: run it (index from
+                             * qm_selected_server_cmd()); menu stays open */
 } qm_action_t;
+
+/* Apollo server commands listed in the quick menu. */
+#define QM_MAX_CMDS 16
+#define QM_CMD_LEN  64
 
 /* Bitrate bounds/step mirror the Settings row (SET_BITRATE) so both UIs
  * agree on the legal range. */
@@ -29,9 +35,10 @@ typedef enum {
 #define QM_ROW_TOUCHPAD  0
 #define QM_ROW_OVERLAY   1
 #define QM_ROW_BITRATE   2
-#define QM_ROW_QUIT      3
-#define QM_ROW_QUIT_APP  4
-#define QM_ROW_COUNT     5
+#define QM_ROW_COMMANDS  3 /* opens the Apollo PC command list */
+#define QM_ROW_QUIT      4
+#define QM_ROW_QUIT_APP  5
+#define QM_ROW_COUNT     6
 
 typedef struct {
     int open;            /* menu visible */
@@ -40,7 +47,20 @@ typedef struct {
     int overlay;         /* current perf-overlay state (display + toggle) */
     int bitrate;         /* live value while open, QM_BITRATE_MIN..MAX */
     int bitrate_changed; /* bitrate != the value the session started with */
+    int is_apollo;       /* host is Apollo (server commands possible) */
+    int cmd_count;       /* commands Apollo published for this client */
+    int cmd_mode;        /* the command list is showing instead of rows */
+    int cmd_sel;         /* selected command in the list */
+    int cmd_ran;         /* last command started, -1 = none yet */
+    char cmd_names[QM_MAX_CMDS][QM_CMD_LEN];
 } qm_view_t;
+
+/* Commands shown under "PC commands" (copy; call before qm_open). names is
+ * a flat array of count strings, item_len bytes apart. */
+void qm_set_server_cmds(const char *names, int count, int item_len, int is_apollo);
+
+/* Index of the command the last QM_ACT_SERVER_CMD refers to. */
+int qm_selected_server_cmd(void);
 
 /* Open with the session's current values. sel starts on the first row. */
 void qm_open(int touchpad, int overlay, int bitrate);

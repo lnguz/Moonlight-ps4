@@ -18,6 +18,12 @@ int videodec2_spike_run(void);
 /* Videodec2 tuning; must be called before LiStartConnection (dr_setup latches it). */
 void video_orbis_set_tuning(int pipeline_depth, int thread_prio,
                             int au_onion, int fb_garlic);
+/* Presentation policy (Artemis/Ariane-style). latest_frame: when a newer
+ * frame is already queued behind this one, decode this one (H.264
+ * references must stay intact) but do not show it, so the screen always
+ * carries the freshest picture. late_us: frames that waited longer than
+ * this in the decode queue are decoded but not shown (0 = never skip). */
+void video_orbis_set_present_policy(int latest_frame, int late_us);
 #endif
 
 typedef enum {

@@ -52,7 +52,22 @@ typedef struct {
     bool dec_fb_garlic;     // force decoder framebuffer to WC_GARLIC (skip ONION alias)
     int bgra_workers;       // NV12->BGRA convert threads (1..6)
     int bgra_nt;            // -1 auto, 0 cached stores, 1 streaming stores
+
+    /* moonlight-ps4 Apollo fork additions. */
+    char device_name[32];   // name sent when pairing (Apollo client list)
+    bool virtual_display;   // ask Apollo for a virtual monitor per launch
+    int vd_scale;           // Windows scaling of that monitor, percent
+    int touchpad_click;     // TOUCH_CLICK_* (physical touchpad click)
+    bool wifi_keepalive;    // 50 Hz tiny ping so Wi-Fi power save never naps
+    bool latest_frame;      // show only the newest decoded frame (lowest lag)
+    int present_late_us;    // frames older than this are decoded, not shown
 } app_config_t;
+
+/* What the physical touchpad click sends to the host. */
+#define TOUCH_CLICK_SELECT   0 /* Back/Select (Share on a host DS4) */
+#define TOUCH_CLICK_MOUSE    1 /* left click while touchpad mouse is on */
+#define TOUCH_CLICK_TOUCHPAD 2 /* DS4 touchpad button (DS4-native games) */
+#define TOUCH_CLICK_COUNT    3
 
 void config_set_defaults(app_config_t *cfg);
 void config_ensure_dir(const char *dir);

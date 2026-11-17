@@ -18,6 +18,8 @@ int gs_refresh_status(gs_server_t *server){(void)server;return GS_OK;}
 int gs_applist(gs_server_t *server,app_entry_t **apps){(void)server;*apps=NULL;return GS_OK;}
 void xml_applist_free(app_entry_t *apps){(void)apps;}
 int gs_quit_app(gs_server_t *server){quits++;server->currentGame=0;return GS_OK;}
+void gs_set_device_name(const char *name){(void)name;}
+int wol_send(const char *mac,const char *ip){(void)mac;(void)ip;return 4;}
 
 int main(void) {
     app_config_t cfg={0};gs_server_t server={0};

@@ -19,24 +19,48 @@ static void control_hint(ui_surface_t *s,int button,int x,int y,const char *text
     ui_label(s,x+key+scale(s,10),y+scale(s,5),scale(s,22),0,TEXT,text);
 }
 
+static void ui_stream_command_list(ui_surface_t *s,const qm_view_t *m,int x,int y,int w,int h,int pad){
+    ui_label(s,x+pad,y+scale(s,78),scale(s,36),0,TEXT,"PC commands");
+    ui_label(s,x+pad,y+scale(s,134),scale(s,21),0,DIM,"Run on your PC through Apollo");
+    ui_rect(s,x+pad,y+scale(s,187),w-pad*2,scale(s,1),RULE);
+    const int visible=6;
+    int count=m->cmd_count<0?0:(m->cmd_count>QM_MAX_CMDS?QM_MAX_CMDS:m->cmd_count);
+    int sel=m->cmd_sel<0?0:(m->cmd_sel>=count?count-1:m->cmd_sel);
+    int first=sel-visible+1;if(first<0)first=0;
+    for(int r=0;r<visible && first+r<count;r++){
+        int i=first+r,row_y=y+scale(s,211+r*78),selected=i==sel;
+        if(selected)ui_round_rect(s,x+scale(s,18),row_y,w-scale(s,36),scale(s,66),scale(s,10),TEXT);
+        char name[QM_CMD_LEN];snprintf(name,sizeof(name),"%s",m->cmd_names[i]);
+        ui_label_fit(s,x+pad,row_y+scale(s,16),scale(s,26),0,selected?PANEL:TEXT,name,w-pad*2);
+    }
+    int info_y=y+scale(s,737);
+    if(m->cmd_ran>=0 && m->cmd_ran<count){
+        char text[QM_CMD_LEN+16];snprintf(text,sizeof(text),"Sent: %s",m->cmd_names[m->cmd_ran]);
+        ui_label_fit(s,x+pad,info_y,scale(s,20),0,DIM,text,w-pad*2);
+    }else ui_label(s,x+pad,info_y,scale(s,20),0,DIM,"The game keeps running.");
+    control_hint(s,UI_CROSS,x+pad,y+h-scale(s,63),"Run");
+    control_hint(s,UI_CIRCLE,x+scale(s,278),y+h-scale(s,63),"Back");
+}
+
 void ui_stream_menu(ui_surface_t *s,const qm_view_t *m){
     if(!m || !m->open || s->h<360)return;
-    int margin=scale(s,42),w=scale(s,550),h=scale(s,780);
+    int margin=scale(s,42),w=scale(s,550),h=scale(s,860);
     int x=s->w-margin-w,y=(s->h-h)/2,pad=scale(s,32);
     ui_round_rect_alpha(s,x,y,w,h,scale(s,20),PANEL,248);
     ui_moonlight_logo(s,x+pad+scale(s,12),y+scale(s,38),scale(s,12),TEXT);
     ui_label(s,x+pad+scale(s,36),y+scale(s,20),scale(s,24),0,TEXT,"moonlight");
+    if(m->cmd_mode){ui_stream_command_list(s,m,x,y,w,h,pad);return;}
     ui_label(s,x+pad,y+scale(s,78),scale(s,36),0,TEXT,"Stream controls");
     ui_label(s,x+pad,y+scale(s,134),scale(s,21),0,DIM,"Game input is paused");
     ui_rect(s,x+pad,y+scale(s,187),w-pad*2,scale(s,1),RULE);
-    static const char *names[QM_ROW_COUNT]={"Touchpad mouse","Statistics","Bitrate","Return to library","Close game on PC"};
+    static const char *names[QM_ROW_COUNT]={"Touchpad mouse","Statistics","Bitrate","PC commands","Return to library","Close game on PC"};
     for(int i=0;i<QM_ROW_COUNT;i++){
-        int row_y=y+scale(s,211+i*78+(i>=3?28:0));
+        int row_y=y+scale(s,211+i*78+(i>=QM_ROW_QUIT?28:0));
         int selected=m->sel==i;
         if(selected)ui_round_rect(s,x+scale(s,18),row_y,w-scale(s,36),scale(s,66),scale(s,10),TEXT);
-        if(i==3)ui_rect(s,x+pad,row_y-scale(s,18),w-pad*2,scale(s,1),RULE);
+        if(i==QM_ROW_QUIT)ui_rect(s,x+pad,row_y-scale(s,18),w-pad*2,scale(s,1),RULE);
         uint32_t fg=selected?PANEL:TEXT;
-        int has_value=i<=QM_ROW_BITRATE;
+        int has_value=i<=QM_ROW_COMMANDS;
         int value_w=scale(s,112),text_w=w-pad*2-(has_value?value_w+scale(s,16):0);
         ui_label_fit(s,x+pad,row_y+scale(s,16),scale(s,26),0,fg,names[i],text_w);
         char value[24];
@@ -44,13 +68,23 @@ void ui_stream_menu(ui_surface_t *s,const qm_view_t *m){
             int on=i==QM_ROW_TOUCHPAD?m->touchpad:m->overlay;
             snprintf(value,sizeof(value),"%s",on?"On":"Off");
         }else if(i==QM_ROW_BITRATE)snprintf(value,sizeof(value),"%d Mbps",m->bitrate/1000);
+        else if(i==QM_ROW_COMMANDS){
+            if(m->cmd_count>0)snprintf(value,sizeof(value),"%d",m->cmd_count);
+            else snprintf(value,sizeof(value),"None");
+        }
         else continue;
         right_label(s,x+w-pad-value_w,row_y+scale(s,17),value_w,scale(s,24),fg,value);
     }
-    int info_y=y+scale(s,657);
+    int info_y=y+scale(s,737);
     if(m->sel==QM_ROW_BITRATE){
         ui_label(s,x+pad,info_y,scale(s,20),0,DIM,"Left / right adjusts the bitrate.");
         ui_label(s,x+pad,info_y+scale(s,28),scale(s,20),0,DIM,"Reconnects when you resume.");
+    }else if(m->sel==QM_ROW_COMMANDS){
+        if(m->cmd_count>0)ui_label(s,x+pad,info_y,scale(s,20),0,DIM,"Commands configured in Apollo.");
+        else if(m->is_apollo){
+            ui_label(s,x+pad,info_y,scale(s,20),0,DIM,"None yet. In Apollo, add commands and");
+            ui_label(s,x+pad,info_y+scale(s,28),scale(s,20),0,DIM,"allow them for this PS4.");
+        }else ui_label(s,x+pad,info_y,scale(s,20),0,DIM,"Needs Apollo on the PC.");
     }else if(m->sel==QM_ROW_QUIT_APP){
         ui_label(s,x+pad,info_y,scale(s,20),0,DIM,"Closes the running game on your PC.");
     }else if(m->sel==QM_ROW_QUIT){

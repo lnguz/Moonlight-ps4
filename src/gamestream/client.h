@@ -12,6 +12,11 @@
 
 #define GS_UNIQUEID "0123456789ABCDEF"
 
+/* Apollo (Sunshine fork) extensions published in HTTPS /serverinfo. */
+#define GS_MAX_SERVER_CMDS 16
+#define GS_SERVER_CMD_LEN  64
+#define GS_DEVICE_NAME_LEN 32
+
 typedef struct {
     SERVER_INFORMATION serverInfo;
 
@@ -38,8 +43,29 @@ typedef struct {
      * nobody types 12 hex digits by hand. Empty = host did not report. */
     char host_mac[24]; // "AA:BB:CC:DD:EE:FF"
 
+    /* Apollo: present only in the paired HTTPS serverinfo. */
+    bool isApollo;          // host sent <Permission> (Apollo-only tag)
+    bool vdisplayCapable;   // <VirtualDisplayCapable>true
+    bool vdisplayReady;     // <VirtualDisplayDriverReady>true
+    unsigned permission;    // Apollo PERM bitmask (0 when not Apollo)
+    int serverCmdCount;     // entries in serverCmds (needs server_cmd perm)
+    char serverCmds[GS_MAX_SERVER_CMDS][GS_SERVER_CMD_LEN];
+
     client_identity_t *id;
 } gs_server_t;
+
+/* Name this console reports when pairing (Apollo shows it in its client
+ * list and keys permissions/virtual-display memory on the pairing).
+ * Letters, digits, '-' and '_' only; anything else becomes '-'. Empty
+ * restores the default "PS4". */
+void gs_set_device_name(const char *name);
+const char *gs_get_device_name(void);
+
+/* Apollo launch options appended to /launch and /resume. virtual_display
+ * asks Apollo to create a virtual monitor matching the stream mode;
+ * scale_percent is the Windows scaling for it (100 = no scaling). Plain
+ * Sunshine ignores both parameters. */
+void gs_set_launch_options(bool virtual_display, int scale_percent);
 
 /* Validate a <mac> XML field value and normalize it into out
  * ("AA:BB:CC:DD:EE:FF"). Returns 0 and fills out only for a real,

@@ -1,6 +1,8 @@
 /* in-stream quick menu - portable state (see quick_menu.h). */
 #include "quick_menu.h"
 #include <pthread.h>
+#include <stdio.h>
+#include <string.h>
 static pthread_mutex_t mutex=PTHREAD_MUTEX_INITIALIZER;
 
 static qm_view_t s_qm;
@@ -14,9 +16,26 @@ static int qm_clamp_br(int b) {
     return b;
 }
 
+static void qm_set_server_cmds_locked(const char *names, int count,
+                                     int item_len, int is_apollo) {
+    if (count < 0 || !names || item_len <= 0)
+        count = 0;
+    if (count > QM_MAX_CMDS)
+        count = QM_MAX_CMDS;
+    memset(s_qm.cmd_names, 0, sizeof(s_qm.cmd_names));
+    for (int i = 0; i < count; i++)
+        snprintf(s_qm.cmd_names[i], QM_CMD_LEN, "%.*s", item_len,
+                 names + (size_t)i * (size_t)item_len);
+    s_qm.cmd_count = count;
+    s_qm.is_apollo = is_apollo ? 1 : 0;
+}
+
 static void qm_open_locked(int touchpad, int overlay, int bitrate) {
     s_qm.open = 1;
     s_qm.sel = 0;
+    s_qm.cmd_mode = 0;
+    s_qm.cmd_sel = 0;
+    s_qm.cmd_ran = -1;
     s_qm.touchpad = touchpad ? 1 : 0;
     s_qm.overlay = overlay ? 1 : 0;
     s_qm.bitrate = qm_clamp_br(bitrate);
@@ -39,6 +58,25 @@ static int qm_is_open_locked(void) {
 static qm_action_t qm_input_locked(unsigned pressed) {
     if (!s_qm.open || !pressed)
         return QM_ACT_NONE;
+
+    /* PC command list: UP/DOWN pick, CROSS runs, CIRCLE goes back. */
+    if (s_qm.cmd_mode) {
+        if (s_qm.cmd_count > 0) {
+            if (pressed & MENU_BTN_UP)
+                s_qm.cmd_sel = (s_qm.cmd_sel + s_qm.cmd_count - 1) % s_qm.cmd_count;
+            if (pressed & MENU_BTN_DOWN)
+                s_qm.cmd_sel = (s_qm.cmd_sel + 1) % s_qm.cmd_count;
+        }
+        if (pressed & MENU_BTN_CIRCLE) {
+            s_qm.cmd_mode = 0;
+            return QM_ACT_NONE;
+        }
+        if ((pressed & MENU_BTN_CROSS) && s_qm.cmd_count > 0) {
+            s_qm.cmd_ran = s_qm.cmd_sel;
+            return QM_ACT_SERVER_CMD;
+        }
+        return QM_ACT_NONE;
+    }
 
     /* Navigation first: UP/DOWN always move, even on the bitrate row. */
     if (pressed & MENU_BTN_UP)
@@ -70,6 +108,13 @@ static qm_action_t qm_input_locked(unsigned pressed) {
         case QM_ROW_OVERLAY:
             s_qm.overlay = !s_qm.overlay;
             return QM_ACT_TOGGLE_OVERLAY;
+        case QM_ROW_COMMANDS:
+            if (s_qm.cmd_count > 0) {
+                s_qm.cmd_mode = 1;
+                if (s_qm.cmd_sel >= s_qm.cmd_count)
+                    s_qm.cmd_sel = 0;
+            }
+            return QM_ACT_NONE;
         case QM_ROW_QUIT:
             return QM_ACT_QUIT;
         case QM_ROW_QUIT_APP:
@@ -96,3 +141,7 @@ int qm_is_open(void){pthread_mutex_lock(&mutex);int result=qm_is_open_locked();p
 qm_action_t qm_input(unsigned pressed){pthread_mutex_lock(&mutex);qm_action_t result=qm_input_locked(pressed);pthread_mutex_unlock(&mutex);return result;}
 
 void qm_view(qm_view_t *out){pthread_mutex_lock(&mutex);qm_view_locked(out);pthread_mutex_unlock(&mutex);}
+
+void qm_set_server_cmds(const char *names,int count,int item_len,int is_apollo){pthread_mutex_lock(&mutex);qm_set_server_cmds_locked(names,count,item_len,is_apollo);pthread_mutex_unlock(&mutex);}
+
+int qm_selected_server_cmd(void){pthread_mutex_lock(&mutex);int result=s_qm.cmd_ran;pthread_mutex_unlock(&mutex);return result;}

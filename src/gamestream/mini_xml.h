@@ -17,6 +17,12 @@ int xml_status(const char *data, size_t len);
 // *result (malloc, with entities decoded). GS_OK if found.
 int xml_search(const char *data, size_t len, const char *node, char **result);
 
+// Collect the text of every <node>text</node> occurrence (in document order)
+// into out, a flat array of max_items strings of item_cap bytes each
+// (entities decoded, truncated to fit). Returns how many were stored.
+int xml_search_all(const char *data, size_t len, const char *node,
+                   char *out, size_t max_items, size_t item_cap);
+
 // Extract the <App><ID/><AppTitle/></App> list. Free with xml_applist_free.
 int xml_applist(const char *data, size_t len, app_entry_t **list);
 void xml_applist_free(app_entry_t *list);

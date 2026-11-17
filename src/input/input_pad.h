@@ -32,6 +32,13 @@ void input_rumble(int slot, unsigned low, unsigned high);
  * two-finger drag also scrolls (see touch_gesture.h for the rules). */
 void input_set_touchpad_mouse(int enable);
 
+/* What the physical touchpad click sends (config TOUCH_CLICK_*):
+ * 0 = Back/Select (default; the DS4 Share/PS buttons belong to the
+ * console), 1 = left mouse click while touchpad mouse is on (two fingers
+ * = right click), 2 = the DS4 touchpad button. In modes 0 and 2 the
+ * finger still moves the mouse when touchpad mouse is on. */
+void input_set_touchpad_click(int mode);
+
 /* hold progress (0..1000) of the in-stream quick-menu combo
  * (L3+R3, 2.5 s); the renderer turns it into an on-screen progress ring.
  * 0 = idle. (The old OPTIONS+TOUCHPAD quit combo is gone.) */

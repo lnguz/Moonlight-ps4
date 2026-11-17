@@ -43,7 +43,19 @@ typedef struct {
     char connected;         /* last read connected flag */
     char sent_neutral;      /* released all inputs to the host after drop */
     unsigned last_buttons;  /* host-visible flags (for neutral release) */
+    /* Last controller event actually sent (send-on-change). */
+    int sent_valid;
+    int sent_buttons;
+    unsigned sent_mask;
+    unsigned char sent_l2, sent_r2;
+    short sent_lx, sent_ly, sent_rx, sent_ry;
+    uint64_t sent_us;
 } pad_slot_t;
+
+/* Unchanged pad state is re-sent at this period as a safety net; between
+ * refreshes only changes go out (the Wi-Fi keep-alive ping in stream.c
+ * keeps the radio awake when the player holds still). */
+#define PAD_REFRESH_US 250000ull
 
 /* hold duration of the in-stream L3+R3 combo. The stats
  * hold used to be 0.5 s - easy to hit accidentally mid-game (L3+R3
@@ -74,6 +86,7 @@ static int s_resume_neutral[MAX_PADS];
  * (touch_gesture.c) also handles two-finger scroll; this block keeps the
  * host button state + the shared gesture struct. */
 static int s_touch_mouse;
+static int s_touch_click; /* 0 Select, 1 mouse click, 2 DS4 touchpad */
 static touch_gesture_t s_tg;
 static atomic_ullong s_stats_combo_start_us;
 static atomic_int s_stats_combo_done;
@@ -163,6 +176,7 @@ static void pads_sync_users(void) {
             unsigned mask=0;
             for(int other=0;other<MAX_PADS;other++)if(other!=i && s_pads[other].handle>=0 && s_pads[other].connected)mask|=1u<<other;
             if(p->announced)LiSendMultiControllerEvent((short)i,(short)mask,0,0,0,0,0,0,0);
+            p->sent_valid = 0;
             scePadClose(p->handle);
             p->handle = -1;
             p->announced = 0;
@@ -276,6 +290,10 @@ static void input_rumble_locked(int slot, unsigned low, unsigned high) {
         LOGW("input: rumble slot %d failed 0x%08x", slot, (unsigned)rc);
 }
 
+void input_set_touchpad_click(int mode) {
+    s_touch_click = (mode >= 0 && mode <= 2) ? mode : 0;
+}
+
 void input_set_touchpad_mouse(int enable) {
     s_touch_mouse = enable ? 1 : 0;
     /* Mode switch mid-press: force-release mouse buttons + gestures. */
@@ -377,6 +395,7 @@ void input_quick_menu_engage(void) {
         if (p->handle >= 0 && p->connected && p->announced) {
             mask |= 1u << i;
             p->last_buttons = 0;
+            p->sent_valid = 0; /* next real state always goes out */
             LiSendMultiControllerEvent((short)i, (short)mask, 0, 0, 0,
                                        0, 0, 0, 0);
         }
@@ -568,10 +587,12 @@ static void mouse_send_button(int which, int down) {
 /* Map DS4 touch data to host mouse events via the gesture machine
  * (touch_gesture.c): 1 finger = pointer, 1-finger click = left button,
  * 2-finger click = right button, 2-finger drag = wheel scroll. */
-static void touchpad_mouse_process(const OrbisPadData *pad) {
+static void touchpad_mouse_process(const OrbisPadData *pad, int with_click) {
     touch_report_t rep;
     memset(&rep, 0, sizeof(rep));
-    rep.click = (pad->buttons & ORBIS_PAD_BUTTON_TOUCH_PAD) != 0;
+    /* with_click = 0: the finger still moves/scrolls the pointer, but the
+     * physical click belongs to the gamepad (Select or DS4 touchpad). */
+    rep.click = with_click && (pad->buttons & ORBIS_PAD_BUTTON_TOUCH_PAD) != 0;
     int fingers = pad->touch.fingers;
     if (fingers > ORBIS_PAD_MAX_TOUCH_NUM)
         fingers = ORBIS_PAD_MAX_TOUCH_NUM;
@@ -656,6 +677,7 @@ static void slot_forward(int slot, const OrbisPadData *pad, unsigned mask,
         }
         if (!p->sent_neutral) {
             p->sent_neutral = 1;
+            p->sent_valid = 0;
             p->last_buttons = 0;
             LiSendMultiControllerEvent((short)slot, (short)mask, 0, 0, 0,
                                        0, 0, 0, 0);
@@ -667,6 +689,7 @@ static void slot_forward(int slot, const OrbisPadData *pad, unsigned mask,
         p->connected = 1;
         p->guide=(guide_chord_t){0};
         p->sent_neutral = 0;
+        p->sent_valid = 0;
         /* Lightbar: the host's color (Steam via Sunshine) when it set one
          * this session, else the slot's player color. */
         (void)scePadSetLightBar(p->handle,
@@ -705,8 +728,16 @@ static void slot_forward(int slot, const OrbisPadData *pad, unsigned mask,
      * cursor; the physical click becomes left/right mouse. The gamepad
      * "touchpad button" is then not forwarded. */
     if (touch_mouse_mode && slot == 0 && !neutral) {
+        int mouse_click = s_touch_click == 1;
+        if (mouse_click)
+            buttons &= ~(unsigned)TOUCHPAD_FLAG;
+        touchpad_mouse_process(pad, mouse_click);
+    }
+    /* The DS4 Share and PS buttons belong to the console, so the touchpad
+     * click doubles as Back/Select (Share on a host-side DualShock 4). */
+    if (s_touch_click == 0 && (buttons & TOUCHPAD_FLAG)) {
         buttons &= ~(unsigned)TOUCHPAD_FLAG;
-        touchpad_mouse_process(pad);
+        buttons |= BACK_FLAG;
     }
 
     // Y axis inverted: PS4 grows downward, Moonlight upward.
@@ -717,9 +748,25 @@ static void slot_forward(int slot, const OrbisPadData *pad, unsigned mask,
 
     if(neutral)lx=ly=rx=ry=0;
     p->last_buttons = (unsigned)buttons;
+    unsigned char l2 = neutral ? 0 : pad->analogButtons.l2;
+    unsigned char r2 = neutral ? 0 : pad->analogButtons.r2;
+    /* Send on change only (plus a slow refresh): fewer packets on the
+     * uplink and no repeated identical states queued behind real input. */
+    uint64_t now = now_us();
+    if (p->sent_valid && p->sent_buttons == buttons && p->sent_mask == mask &&
+        p->sent_l2 == l2 &&
+        p->sent_r2 == r2 && p->sent_lx == lx && p->sent_ly == ly &&
+        p->sent_rx == rx && p->sent_ry == ry &&
+        now - p->sent_us < PAD_REFRESH_US)
+        return;
+    p->sent_valid = 1;
+    p->sent_buttons = buttons;
+    p->sent_mask = mask;
+    p->sent_l2 = l2; p->sent_r2 = r2;
+    p->sent_lx = lx; p->sent_ly = ly; p->sent_rx = rx; p->sent_ry = ry;
+    p->sent_us = now;
     LiSendMultiControllerEvent((short)slot, (short)mask, buttons,
-                               neutral?0:pad->analogButtons.l2, neutral?0:pad->analogButtons.r2,
-                               lx, ly, rx, ry);
+                               l2, r2, lx, ly, rx, ry);
 }
 
 static bool input_poll_locked(void) {

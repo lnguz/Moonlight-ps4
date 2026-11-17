@@ -274,3 +274,29 @@ void xml_applist_free(app_entry_t *list) {
         list = next;
     }
 }
+
+int xml_search_all(const char *data, size_t len, const char *node,
+                   char *out, size_t max_items, size_t item_cap) {
+    if (!data || !node || !out || !max_items || !item_cap)
+        return 0;
+    scanner_t s = { data, data + len };
+    char name[NAME_MAX_LEN];
+    size_t count = 0;
+    for (;;) {
+        token_t t = next_tag(&s, name, NULL, NULL);
+        if (t == TOK_EOF || count >= max_items)
+            break;
+        if (t != TOK_OPEN || strcmp(name, node) != 0)
+            continue;
+        const char *text;
+        size_t text_len;
+        tag_text(&s, &text, &text_len);
+        char *decoded = decode_entities(text, text_len);
+        if (!decoded)
+            break;
+        snprintf(out + count * item_cap, item_cap, "%s", decoded);
+        free(decoded);
+        count++;
+    }
+    return (int)count;
+}

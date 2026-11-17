@@ -53,6 +53,13 @@ void config_set_defaults(app_config_t *cfg) {
     cfg->touchpad_mouse = true;  /* natural for Desktop; games never touch it */
     cfg->gyro_motion = true;     /* motion aiming works out of the box */
     snprintf(cfg->app_name, sizeof(cfg->app_name), "Steam Big Picture");
+    snprintf(cfg->device_name, sizeof(cfg->device_name), "PS4");
+    cfg->virtual_display = true;   /* Apollo: per-client virtual monitor */
+    cfg->vd_scale = 100;
+    cfg->touchpad_click = TOUCH_CLICK_SELECT; /* the DS4 has no usable Share */
+    cfg->wifi_keepalive = true;
+    cfg->latest_frame = false;
+    cfg->present_late_us = 33000;
 }
 
 void config_ensure_dir(const char *dir) {
@@ -204,6 +211,26 @@ int config_load(app_config_t *cfg, const char *dir) {
             cfg->bgra_workers = atoi(val);
         else if (!strcmp(key, "bgra_nt"))
             cfg->bgra_nt = atoi(val);
+        else if (!strcmp(key, "device_name"))
+            snprintf(cfg->device_name, sizeof(cfg->device_name), "%s", val);
+        else if (!strcmp(key, "virtual_display"))
+            cfg->virtual_display = parse_bool(val);
+        else if (!strcmp(key, "vd_scale")) {
+            int scale = atoi(val);
+            if (scale >= 50 && scale <= 300) cfg->vd_scale = scale;
+        }
+        else if (!strcmp(key, "touchpad_click")) {
+            int mode = atoi(val);
+            if (mode >= 0 && mode < TOUCH_CLICK_COUNT) cfg->touchpad_click = mode;
+        }
+        else if (!strcmp(key, "wifi_keepalive"))
+            cfg->wifi_keepalive = parse_bool(val);
+        else if (!strcmp(key, "latest_frame"))
+            cfg->latest_frame = parse_bool(val);
+        else if (!strcmp(key, "present_late_us")) {
+            int late = atoi(val);
+            if (late == 0 || (late >= 8000 && late <= 100000)) cfg->present_late_us = late;
+        }
         else
             LOGW("config: clave desconocida '%s'", key);
     }
@@ -280,7 +307,14 @@ int config_save(const app_config_t *cfg, const char *dir) {
             "dec_au_onion = %s\n"
             "dec_fb_garlic = %s\n"
             "bgra_workers = %d\n"
-            "bgra_nt = %d\n",
+            "bgra_nt = %d\n"
+            "device_name = %s\n"
+            "virtual_display = %s\n"
+            "vd_scale = %d\n"
+            "touchpad_click = %d\n"
+            "wifi_keepalive = %s\n"
+            "latest_frame = %s\n"
+            "present_late_us = %d\n",
             cfg->host, (unsigned)cfg->http_port, cfg->app_name,
             cfg->last_app,cfg->reduced_motion?"true":"false",cfg->controller_deadzone,cfg->swap_face_buttons?"true":"false",cfg->debug_host,
             cfg->stream.width, cfg->stream.height, cfg->stream.fps, cfg->stream.bitrate,
@@ -303,7 +337,13 @@ int config_save(const app_config_t *cfg, const char *dir) {
             cfg->dec_pipeline_depth, cfg->dec_thread_prio, cfg->slices_per_frame,
             cfg->dec_au_onion ? "true" : "false",
             cfg->dec_fb_garlic ? "true" : "false",
-            cfg->bgra_workers, cfg->bgra_nt);
+            cfg->bgra_workers, cfg->bgra_nt,
+            cfg->device_name,
+            cfg->virtual_display ? "true" : "false",
+            cfg->vd_scale, cfg->touchpad_click,
+            cfg->wifi_keepalive ? "true" : "false",
+            cfg->latest_frame ? "true" : "false",
+            cfg->present_late_us);
     int failed=ferror(f);
     if(fclose(f)!=0)failed=1;
     char destination[512];snprintf(destination,sizeof(destination),"%s/moonlight.ini",dir);

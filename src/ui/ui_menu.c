@@ -299,6 +299,8 @@ enum {
     SET_DEADZONE,
     SET_SWAP_FACE,
     SET_SURROUND,SET_TOUCHPAD_MOUSE,SET_GYRO,SET_TITLE_MOTION,SET_EXIT,
+    SET_TOUCH_CLICK,SET_FRAME_PACING,SET_WIFI_KEEPALIVE,
+    SET_VDISPLAY,SET_VD_SCALE,SET_DEVICE_NAME,SET_WAKE_PC,
     SET_COUNT,
 };
 
@@ -320,7 +322,18 @@ static const char *k_set_names[SET_COUNT] = {
     "Stick deadzone",
     "Swap Cross / Circle",
     "5.1 surround (HDMI)","Touchpad mouse","Motion input","Motion for selected game","Exit Moonlight",
+    "Touchpad click","Frame pacing","Wi-Fi keep-alive",
+    "Virtual display","Display scaling","Device name","Wake PC",
 };
+
+/* Device names offered in Settings (any other name can be set in the INI).
+ * Apollo keeps the name chosen at pairing; rename an existing pairing in
+ * Apollo's web UI. */
+static const char *k_device_names[]={"PS4","PS4-Slim","PS4-Pro","PS4-Living","PS4-Bedroom"};
+#define DEVICE_NAME_COUNT 5
+static const int k_vd_scales[]={100,125,150,175,200};
+#define VD_SCALE_COUNT 5
+static const char *k_touch_click_names[TOUCH_CLICK_COUNT]={"Select","Mouse click","DS4 touchpad"};
 
 /* Numeric IPv4 keyboard. */
 #define OSK_COLS 3
@@ -331,14 +344,15 @@ static const char k_osk_chars[OSK_ROWS][OSK_COLS + 1] = {
 
 typedef struct { const char *name;int count;int rows[8]; } settings_group_t;
 static const settings_group_t setting_groups[]={
-    {"Connection",1,{SET_HOST}},
-    {"Video",3,{SET_RES,SET_FPS,SET_BITRATE}},
+    {"Connection",3,{SET_HOST,SET_WAKE_PC,SET_WIFI_KEEPALIVE}},
+    {"Video",4,{SET_RES,SET_FPS,SET_BITRATE,SET_FRAME_PACING}},
     {"Audio",2,{SET_LOCAL_AUDIO,SET_SURROUND}},
-    {"Controller",5,{SET_DEADZONE,SET_SWAP_FACE,SET_TOUCHPAD_MOUSE,SET_GYRO,SET_TITLE_MOTION}},
+    {"Controller",6,{SET_DEADZONE,SET_SWAP_FACE,SET_TOUCH_CLICK,SET_TOUCHPAD_MOUSE,SET_GYRO,SET_TITLE_MOTION}},
     {"Advanced",8,{SET_THEME,SET_REDUCED,SET_PREFER_HW,SET_SHOW_STATS,SET_FILE_LOG,SET_DECODE_MODE,SET_SOPS,SET_PREFER_YCBCR}},
+    {"Apollo",3,{SET_VDISPLAY,SET_VD_SCALE,SET_DEVICE_NAME}},
     {"Exit",1,{SET_EXIT}}
 };
-#define SETTING_GROUPS 6
+#define SETTING_GROUPS 7
 
 
 typedef struct {
@@ -684,6 +698,13 @@ static void set_value_str(const ui_state_t *st, int row, char *out, size_t cap) 
     case SET_GYRO:snprintf(out,cap,"%s",c->gyro_motion?"On":"Off");break;
     case SET_TITLE_MOTION:snprintf(out,cap,"%s",st->napps?(config_title_motion_enabled(c,st->apps[st->sel_app].id)?"On":"Off"):"Select a game first");break;
     case SET_EXIT:snprintf(out,cap,"Return to PS4 home");break;
+    case SET_TOUCH_CLICK:snprintf(out,cap,"%s",k_touch_click_names[c->touchpad_click>=0&&c->touchpad_click<TOUCH_CLICK_COUNT?c->touchpad_click:0]);break;
+    case SET_FRAME_PACING:snprintf(out,cap,"%s",c->latest_frame?"Lowest latency":"Smooth");break;
+    case SET_WIFI_KEEPALIVE:snprintf(out,cap,"%s",c->wifi_keepalive?"On":"Off");break;
+    case SET_VDISPLAY:snprintf(out,cap,"%s",c->virtual_display?"On":"Off");break;
+    case SET_VD_SCALE:snprintf(out,cap,"%d%%",c->vd_scale);break;
+    case SET_DEVICE_NAME:snprintf(out,cap,"%s",c->device_name);break;
+    case SET_WAKE_PC:snprintf(out,cap,"%s",c->wol_mac[0]?c->wol_mac:"Connect once first");break;
     case SET_REDUCED: snprintf(out,cap,"%s",c->reduced_motion?"On":"Off");break;
     case SET_DEADZONE: snprintf(out,cap,"%d%%",c->controller_deadzone);break;
     case SET_SWAP_FACE: snprintf(out,cap,"%s",c->swap_face_buttons?"On":"Off");break;
@@ -889,6 +910,38 @@ static void settings_input(ui_state_t *st, unsigned pr) {
             snprintf(st->notice,sizeof(st->notice),"Motion override list is full.");
         break;
     case SET_EXIT:if(activate)st->result=UI_MENU_EXIT;changed=0;break;
+    case SET_WAKE_PC:
+        changed=0;
+        if(!activate)break;
+        if(!c->wol_mac[0]) {
+            snprintf(st->notice,sizeof(st->notice),"No PC MAC yet. Connect to your PC once while it is on.");
+        } else if(wol_send(c->wol_mac,c->host)>0) {
+            snprintf(st->notice,sizeof(st->notice),"Wake packet sent to %s. Try connecting in ~15 s.",c->wol_mac);
+        } else {
+            snprintf(st->notice,sizeof(st->notice),"Could not send the wake packet. Check the console network.");
+        }
+        break;
+    case SET_TOUCH_CLICK:
+        c->touchpad_click=(c->touchpad_click+(dir?dir:1)+TOUCH_CLICK_COUNT)%TOUCH_CLICK_COUNT;
+        break;
+    case SET_FRAME_PACING:c->latest_frame=!c->latest_frame;break;
+    case SET_WIFI_KEEPALIVE:c->wifi_keepalive=!c->wifi_keepalive;break;
+    case SET_VDISPLAY:c->virtual_display=!c->virtual_display;break;
+    case SET_VD_SCALE: {
+        int cur=0;
+        for(int i=0;i<VD_SCALE_COUNT;i++)if(k_vd_scales[i]==c->vd_scale)cur=i;
+        cur=(cur+(dir?dir:1)+VD_SCALE_COUNT)%VD_SCALE_COUNT;
+        c->vd_scale=k_vd_scales[cur];
+        break;
+    }
+    case SET_DEVICE_NAME: {
+        int cur=-1;
+        for(int i=0;i<DEVICE_NAME_COUNT;i++)if(!strcmp(k_device_names[i],c->device_name))cur=i;
+        cur=cur<0?0:(cur+(dir?dir:1)+DEVICE_NAME_COUNT)%DEVICE_NAME_COUNT;
+        snprintf(c->device_name,sizeof(c->device_name),"%s",k_device_names[cur]);
+        gs_set_device_name(c->device_name);
+        break;
+    }
     case SET_REDUCED: c->reduced_motion=!c->reduced_motion;break;
     case SET_DEADZONE:
         c->controller_deadzone+=dir?dir:1;
@@ -1001,7 +1054,7 @@ static void draw_settings(ui_state_t *st, ui_surface_t *s) {
         [SET_HOST]={"Enter your gaming PC's IP address.","Use Computers to scan the network."},
         [SET_RES]={"1080p shows more detail.","720p uses less bandwidth."},
         [SET_FPS]={"60 FPS makes movement fluid.","30 FPS reduces host and network load."},
-        [SET_BITRATE]={"Higher bitrate keeps more detail.","Lower it if your connection struggles."},
+        [SET_BITRATE]={"Higher bitrate keeps more detail.","On Wi-Fi, 20-30 Mbps is usually smoother."},
         [SET_LOCAL_AUDIO]={"Also play stream audio on the PC.","Console audio stays enabled."},
         [SET_DEADZONE]={"Ignore small stick movements near centre.","Raise this if the camera drifts."},
         [SET_SWAP_FACE]={"Swap Cross and Circle on the host.","The console menu keeps its controls."},
@@ -1012,14 +1065,21 @@ static void draw_settings(ui_state_t *st, ui_surface_t *s) {
         [SET_FILE_LOG]={"Save diagnostics on the console.","Leave off during normal play."},
         [SET_DECODE_MODE]={"Balanced allows decoding overlap.","Low latency queues less work."},
         [SET_SOPS]={"Ask the host to optimise game settings.","Support depends on the streaming host."},
-        [SET_PREFER_YCBCR]={"Experimental video output.","Requires the YCbCr GoldHEN plugin."}
+        [SET_PREFER_YCBCR]={"Experimental video output.","Requires the YCbCr GoldHEN plugin."},
+        [SET_TOUCH_CLICK]={"Select sends Back/Select (Share).","Mouse click keeps the old behaviour."},
+        [SET_FRAME_PACING]={"Lowest latency always shows the newest frame.","Smooth keeps every frame; less judder."},
+        [SET_WIFI_KEEPALIVE]={"Stops Wi-Fi power saving mid-stream.","Keep on over Wi-Fi; harmless on cable."},
+        [SET_VDISPLAY]={"Apollo creates a monitor at the stream's","resolution and FPS. Sunshine ignores it."},
+        [SET_VD_SCALE]={"Windows scaling of the virtual monitor.","100% suits a TV at 1080p."},
+        [SET_DEVICE_NAME]={"Name sent to Apollo when pairing.","Rename old pairings in Apollo's web UI."},
+        [SET_WAKE_PC]={"Press X to send Wake-on-LAN to your PC.","The MAC is learned when you connect."}
     };
     ui_label_fit(s,1290,300,34,0,COL_TEXT,k_set_names[setting],530);
     if(help[setting][0])ui_label_fit(s,1290,382,24,0,COL_DIM,help[setting][0],530);
     if(help[setting][1])ui_label_fit(s,1290,430,24,0,COL_DIM,help[setting][1],530);
     if(st->set_group==3) {
         ui_label(s,1290,572,24,0,COL_DIM,"L1 + R1 + Options: host Guide");
-        ui_label(s,1290,620,24,0,COL_DIM,"Options + touchpad: return to menu");
+        ui_label(s,1290,620,24,0,COL_DIM,"Hold L3 + R3: stream menu");
     }
     ui_label(s,1290,810,23,0,COL_DIM,"Changes save automatically.");
     if(st->host_dirty)ui_label_fit(s,1290,862,23,0,COL_WARN,"Refresh Library to reconnect.",530);

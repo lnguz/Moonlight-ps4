@@ -385,6 +385,8 @@ static int stream_connect(app_config_t *cfg, const char *config_dir) {
     char pin[8] = {0};
     char line[160];
 
+    /* Pairing reports this name; Apollo lists the console under it. */
+    gs_set_device_name(cfg->device_name);
     LOGI("gs_init(%s:%u)...", cfg->host, (unsigned)cfg->http_port);
 
     if(atomic_exchange(&connect_busy,1)){ui_menu_set_notice("The previous connection request is finishing. Retry shortly.");return -1;}
@@ -631,6 +633,10 @@ static int stream_reconnect(app_config_t *cfg, int app_id,
  * and click it again. */
 static int stream_play(app_config_t *cfg, const char *config_dir) {
     ui_controls_preload();
+    /* Apollo: name for pairing, virtual monitor + scaling for this launch.
+     * Plain Sunshine ignores the launch parameters. */
+    gs_set_device_name(cfg->device_name);
+    gs_set_launch_options(cfg->virtual_display, cfg->vd_scale);
     input_set_preferences(cfg->controller_deadzone,cfg->swap_face_buttons);
     cfg->stream.audioConfiguration=cfg->surround51?AUDIO_CONFIGURATION_51_SURROUND:AUDIO_CONFIGURATION_STEREO;
     s_connected = 0;
@@ -720,6 +726,7 @@ restart:
         if (probe == 0) {
             video_orbis_set_tuning(cfg->dec_pipeline_depth, cfg->dec_thread_prio,
                                    cfg->dec_au_onion, cfg->dec_fb_garlic);
+            video_orbis_set_present_policy(cfg->latest_frame, cfg->present_late_us);
             s_dr = video_callbacks_orbis;
             if (cfg->slices_per_frame > 0)
                 s_dr.capabilities = CAPABILITY_SLICES_PER_FRAME(cfg->slices_per_frame);
@@ -744,6 +751,7 @@ restart:
         ? AUDIO_CONFIGURATION_51_SURROUND : AUDIO_CONFIGURATION_STEREO;
     /* DS4 touchpad as a mouse (Settings toggle, default on). */
     input_set_touchpad_mouse(cfg->touchpad_mouse);
+    input_set_touchpad_click(cfg->touchpad_click);
     /* gyro/accelerometer motion toggle (Settings, default on). */
     input_set_motion_enabled(cfg->gyro_motion && config_title_motion_enabled(cfg,app_id));
 
@@ -816,6 +824,13 @@ restart:
              * Average button-to-host latency drops ~4 ms; negligible CPU cost. */
             usleep(4000);
 
+            /* Wi-Fi keep-alive (Artemis "prevent packet loss"): one tiny
+             * unreliable packet every 20 ms stops the console's Wi-Fi from
+             * dozing between input changes, which otherwise shows up as
+             * bursts of lost video packets and stutter. */
+            if (cfg->wifi_keepalive && s_connected && (ticks % 5) == 0)
+                (void)LiSendKeepAlivePing();
+
             /* L3+R3 hold complete -> open the in-stream quick menu.
              * BGRA present mode only: the YCbCr path cannot draw overlays,
              * so there the hold stays a no-op (logged once). */
@@ -825,6 +840,9 @@ restart:
                          "overlay plane)");
                 } else {
                     input_quick_menu_engage();
+                    qm_set_server_cmds(&s_server.serverCmds[0][0],
+                                       s_server.serverCmdCount,
+                                       GS_SERVER_CMD_LEN, s_server.isApollo);
                     qm_open(cfg->touchpad_mouse, video_get_show_stats(),
                             cfg->stream.bitrate);
                     qm_pad_lost = 0;
@@ -875,6 +893,15 @@ restart:
                             qm_restart = 1;
                         }
                         break;
+                    case QM_ACT_SERVER_CMD: {
+                        int cmd = qm_selected_server_cmd();
+                        if (cmd >= 0 && cmd < s_server.serverCmdCount) {
+                            int rc = LiSendExecServerCmd((uint8_t)cmd);
+                            LOGI("quick menu: server command %d '%s' rc=%d",
+                                 cmd, s_server.serverCmds[cmd], rc);
+                        }
+                        break;
+                    }
                     case QM_ACT_QUIT:
                         qm_close(NULL, NULL);
                         input_quick_menu_disengage();

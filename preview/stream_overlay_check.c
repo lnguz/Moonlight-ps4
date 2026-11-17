@@ -31,6 +31,13 @@ int main(void){
             if(r==0 && selected==2)save_ppm("build-tests/stream-overlays-1080.ppm",&s);
             if(r==1 && selected==4)save_ppm("build-tests/stream-overlays-720.ppm",&s);
         }
+        {
+            qm_view_t c={.open=1,.cmd_mode=1,.cmd_count=QM_MAX_CMDS,.cmd_sel=QM_MAX_CMDS-1,.cmd_ran=3,.is_apollo=1};
+            for(int i=0;i<QM_MAX_CMDS;i++)snprintf(c.cmd_names[i],QM_CMD_LEN,"Command %d with a long descriptive name for the list",i);
+            ui_clear(&s,0xff22262a);ui_stream_menu(&s,&c);
+            if(r==0)save_ppm("build-tests/stream-commands-1080.ppm",&s);
+            c.cmd_count=0;c.cmd_sel=5;c.cmd_ran=-1;ui_stream_menu(&s,&c);
+        }
         const int counts[]={-1,0,1,VIDEO_STATS_HISTORY,VIDEO_STATS_HISTORY+1000};
         for(unsigned i=0;i<sizeof(counts)/sizeof(counts[0]);i++){
             v.frame_count=counts[i];v.fps=NAN;v.rx_mbps=INFINITY;v.frame_ms[0]=NAN;
