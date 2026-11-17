@@ -256,7 +256,38 @@ static unsigned long long sweep_now_ms(void) {
     return (unsigned long long)tv.tv_sec * 1000ull + tv.tv_usec / 1000ull;
 }
 
+/* Copy the text of <tag>...</tag> from a raw serverinfo reply. */
+static void reply_tag(const char *buf, const char *tag, char *out, size_t cap) {
+    char open[40];
+    if (!out || !cap)
+        return;
+    out[0] = '\0';
+    snprintf(open, sizeof(open), "<%s>", tag);
+    const char *s = strstr(buf, open);
+    if (!s)
+        return;
+    s += strlen(open);
+    while (*s == ' ' || *s == '\t')
+        s++;
+    const char *e = strchr(s, '<');
+    if (!e || e <= s)
+        return;
+    size_t n = (size_t)(e - s);
+    if (n >= cap)
+        n = cap - 1;
+    memcpy(out, s, n);
+    out[n] = '\0';
+}
+
+static int probe_host_ex(const char *ip, char *name_out, size_t name_cap,
+                         char *uuid_out, size_t uuid_cap);
+
 static int probe_host(const char *ip, char *name_out, size_t name_cap) {
+    return probe_host_ex(ip, name_out, name_cap, NULL, 0);
+}
+
+static int probe_host_ex(const char *ip, char *name_out, size_t name_cap,
+                         char *uuid_out, size_t uuid_cap) {
     int fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (fd < 0)
         return 0;
@@ -372,6 +403,9 @@ static int probe_host(const char *ip, char *name_out, size_t name_cap) {
         return 0;
     if (!(strstr(buf, "appversion") && strstr(buf, " 200")))
         return 0;
+    /* Host identity for host_relocate(): Sunshine/Apollo's <uniqueid> is
+     * stable across IP changes. */
+    reply_tag(buf, "uniqueid", uuid_out, uuid_cap);
     /* Best-effort display name from the reply (Sunshine includes
      * <hostname> in /serverinfo; GFE does too). Callers pass NULL to
      * skip. Any XML-unsafe character is simply kept — the UI only ever
@@ -525,4 +559,154 @@ int subnet_discover(mdns_host_t *hosts, int count, int capacity) {
     pthread_mutex_destroy(&j->mtx);
     free(j);
     return count + (n > 0 ? n : 0);
+}
+
+/* --- host_relocate: find the saved PC after a DHCP address change ----
+ *
+ * A sequential sweep cannot work on Orbis (an absent address blocks the
+ * connect for ~75 s, see above), but a LIVE PC answers in milliseconds.
+ * So every candidate gets its own small detached thread: the PC's thread
+ * returns almost at once, and threads stuck on empty addresses simply
+ * finish later on their own. Candidates are the addresses closest to the
+ * old one (DHCP usually hands out a nearby lease), capped so a failed
+ * search never floods the console with sockets. A reply only counts when
+ * its <uniqueid> (or, before one was learned, its <hostname>) matches
+ * the saved PC, so another Sunshine/Apollo box is never picked. */
+#define RELOCATE_MAX_PROBES 128
+#define RELOCATE_STACK (128 * 1024)
+
+typedef struct {
+    pthread_mutex_t mtx;
+    int refs;          /* probe threads still running + the caller */
+    int done;          /* caller gave up or a match was published */
+    int answered;      /* hosts that answered at all (diagnostics) */
+    char want_uuid[64];
+    char want_name[64];
+    char found_ip[16];
+} relocate_t;
+
+typedef struct {
+    relocate_t *r;
+    char ip[16];
+} relocate_probe_t;
+
+static void relocate_release(relocate_t *r) {
+    pthread_mutex_lock(&r->mtx);
+    int last = --r->refs == 0;
+    pthread_mutex_unlock(&r->mtx);
+    if (last) {
+        pthread_mutex_destroy(&r->mtx);
+        free(r);
+    }
+}
+
+static void *relocate_probe_thread(void *arg) {
+    relocate_probe_t *p = arg;
+    relocate_t *r = p->r;
+    char name[64] = {0}, uuid[64] = {0};
+    int skip;
+    pthread_mutex_lock(&r->mtx);
+    skip = r->done;
+    pthread_mutex_unlock(&r->mtx);
+    if (!skip && probe_host_ex(p->ip, name, sizeof(name), uuid, sizeof(uuid))) {
+        int match = r->want_uuid[0] ? !strcasecmp(uuid, r->want_uuid)
+                                    : (r->want_name[0] && !strcasecmp(name, r->want_name));
+        pthread_mutex_lock(&r->mtx);
+        r->answered++;
+        if (match && !r->done && !r->found_ip[0])
+            snprintf(r->found_ip, sizeof(r->found_ip), "%s", p->ip);
+        pthread_mutex_unlock(&r->mtx);
+        LOGI("relocate: %s answered (name='%s' uuid=%.8s...) match=%d",
+             p->ip, name, uuid, match);
+    }
+    free(p);
+    relocate_release(r);
+    return NULL;
+}
+
+int host_relocate(const char *old_ip, const char *want_uuid, const char *want_name,
+                  char *out_ip, size_t out_cap, int timeout_ms) {
+    if (out_ip && out_cap)
+        out_ip[0] = '\0';
+    if (!old_ip || !mdns_valid_ipv4(old_ip) || !out_ip || out_cap < 16)
+        return -1;
+    if ((!want_uuid || !want_uuid[0]) && (!want_name || !want_name[0]))
+        return -1; /* nothing to recognize the PC by */
+    unsigned a, b, c, d;
+    if (sscanf(old_ip, "%u.%u.%u.%u", &a, &b, &c, &d) != 4 || d > 255)
+        return -1;
+
+    relocate_t *r = calloc(1, sizeof(*r));
+    if (!r)
+        return -1;
+    pthread_mutex_init(&r->mtx, NULL);
+    r->refs = 1;
+    snprintf(r->want_uuid, sizeof(r->want_uuid), "%s", want_uuid ? want_uuid : "");
+    snprintf(r->want_name, sizeof(r->want_name), "%s", want_name ? want_name : "");
+
+    pthread_attr_t attr;
+    int have_attr = pthread_attr_init(&attr) == 0;
+    if (have_attr) {
+        (void)pthread_attr_setstacksize(&attr, RELOCATE_STACK);
+        (void)pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+    }
+
+    int started = 0;
+    for (int dist = 1; dist < 255 && started < RELOCATE_MAX_PROBES; dist++) {
+        for (int sign = 0; sign < 2 && started < RELOCATE_MAX_PROBES; sign++) {
+            int host = sign ? (int)d - dist : (int)d + dist;
+            if (host < 1 || host > 254)
+                continue;
+            relocate_probe_t *p = calloc(1, sizeof(*p));
+            if (!p)
+                break;
+            p->r = r;
+            snprintf(p->ip, sizeof(p->ip), "%u.%u.%u.%d", a, b, c, host);
+            pthread_mutex_lock(&r->mtx);
+            r->refs++;
+            pthread_mutex_unlock(&r->mtx);
+            pthread_t th;
+            int rc = pthread_create(&th, have_attr ? &attr : NULL,
+                                    relocate_probe_thread, p);
+            if (rc != 0) {
+                /* Out of threads: search with what is running. */
+                pthread_mutex_lock(&r->mtx);
+                r->refs--;
+                pthread_mutex_unlock(&r->mtx);
+                free(p);
+                LOGW("relocate: thread %d failed rc=%d; stopping here", started, rc);
+                dist = 255;
+                break;
+            }
+            if (!have_attr)
+                pthread_detach(th);
+            started++;
+        }
+    }
+    if (have_attr)
+        pthread_attr_destroy(&attr);
+    LOGI("relocate: probing %d addresses around %s", started, old_ip);
+
+    unsigned long long deadline = sweep_now_ms() + (unsigned long long)timeout_ms;
+    int found = 0;
+    for (;;) {
+        pthread_mutex_lock(&r->mtx);
+        if (r->found_ip[0]) {
+            snprintf(out_ip, out_cap, "%s", r->found_ip);
+            found = 1;
+        }
+        int all_done = r->refs == 1;
+        if (found || all_done || sweep_now_ms() >= deadline)
+            r->done = 1;
+        int stop = r->done;
+        int answered = r->answered;
+        pthread_mutex_unlock(&r->mtx);
+        if (stop) {
+            LOGI("relocate: %s after %d answers", found ? out_ip : "not found", answered);
+            break;
+        }
+        usleep(50000);
+    }
+    relocate_release(r);
+    return found ? 0 : -1;
 }

@@ -381,6 +381,28 @@ static void connect_screen_run(const char *host, connect_job_t *j,
     video_ui_end();
 }
 
+/* The saved PC did not answer: maybe the router gave it a new address.
+ * Look for the same PC (by its <uniqueid>) around the old address and,
+ * when found, save the new address. Returns 1 when the host moved. */
+static int s_relocate_depth;
+static int stream_try_relocate(app_config_t *cfg, const char *config_dir) {
+    if (s_relocate_depth || !cfg->host[0] || (!cfg->host_uuid[0] && !cfg->host_name[0]))
+        return 0;
+    char line[96];
+    snprintf(line, sizeof(line), "Your PC is not answering at %s.", cfg->host);
+    ui_show_status("SEARCHING", line, "Looking for it on your network...");
+    char found[16];
+    if (host_relocate(cfg->host, cfg->host_uuid, cfg->host_name,
+                      found, sizeof(found), 6000) != 0 || !strcmp(found, cfg->host))
+        return 0;
+    LOGI("relocate: PC moved %s -> %s; saving", cfg->host, found);
+    snprintf(cfg->host, sizeof(cfg->host), "%s", found);
+    cfg->http_port = 47989;
+    if (config_dir)
+        config_save(cfg, config_dir);
+    return 1;
+}
+
 static int stream_connect(app_config_t *cfg, const char *config_dir) {
     char pin[8] = {0};
     char line[160];
@@ -419,6 +441,14 @@ static int stream_connect(app_config_t *cfg, const char *config_dir) {
              * drain in the background and free itself. */
             pthread_detach(th);
             LOGW("connect: abandoned; worker draining in background");
+            if (!cancelled && stream_try_relocate(cfg, config_dir)) {
+                /* The stuck worker is abandoned and never publishes. */
+                atomic_store(&connect_busy, 0);
+                s_relocate_depth++;
+                int again = stream_connect(cfg, config_dir);
+                s_relocate_depth--;
+                return again;
+            }
             int woke = connect_failed_wol(cfg, cancelled);
             ui_menu_set_notice(cancelled
                 ? "Connect cancelled."
@@ -437,6 +467,13 @@ static int stream_connect(app_config_t *cfg, const char *config_dir) {
     int rc = j->rc;
     if (rc != GS_OK) {
         LOGE("gs_init FAIL: %s", j->errbuf[0] ? j->errbuf : "?");
+        if (stream_try_relocate(cfg, config_dir)) {
+            pthread_mutex_destroy(&j->mtx);free(j);
+            s_relocate_depth++;
+            int again = stream_connect(cfg, config_dir);
+            s_relocate_depth--;
+            return again;
+        }
         int woke = connect_failed_wol(cfg, 0);
         ui_menu_set_notice(woke
             ? "Could not connect - a Wake-on-LAN packet was sent. Try again in ~15 s."
@@ -454,6 +491,19 @@ static int stream_connect(app_config_t *cfg, const char *config_dir) {
     /* adopt the PC-reported MAC for Wake-on-LAN (paired HTTPS
      * serverinfo just filled s_server.host_mac). */
     stream_sync_wol_mac(cfg, config_dir);
+
+    /* Remember who this PC is, so a later DHCP address change can be
+     * followed automatically (stream_try_relocate). */
+    if ((s_server.hostUuid[0] && strcmp(s_server.hostUuid, cfg->host_uuid)) ||
+        (s_server.hostName[0] && strcmp(s_server.hostName, cfg->host_name))) {
+        if (s_server.hostUuid[0])
+            snprintf(cfg->host_uuid, sizeof(cfg->host_uuid), "%s", s_server.hostUuid);
+        if (s_server.hostName[0])
+            snprintf(cfg->host_name, sizeof(cfg->host_name), "%s", s_server.hostName);
+        if (config_dir)
+            config_save(cfg, config_dir);
+        LOGI("stream: PC identity saved (%s, %.8s...)", cfg->host_name, cfg->host_uuid);
+    }
 
     if (!s_server.paired) {
         char path[512];

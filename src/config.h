@@ -61,6 +61,8 @@ typedef struct {
     bool wifi_keepalive;    // 50 Hz tiny ping so Wi-Fi power save never naps
     bool latest_frame;      // show only the newest decoded frame (lowest lag)
     int present_late_us;    // frames older than this are decoded, not shown
+    char host_uuid[64];     // saved PC's <uniqueid>, finds it after an IP change
+    char host_name[64];     // saved PC's <hostname> (fallback identity)
 } app_config_t;
 
 /* What the physical touchpad click sends to the host. */

@@ -231,6 +231,10 @@ int config_load(app_config_t *cfg, const char *dir) {
             int late = atoi(val);
             if (late == 0 || (late >= 8000 && late <= 100000)) cfg->present_late_us = late;
         }
+        else if (!strcmp(key, "host_uuid"))
+            snprintf(cfg->host_uuid, sizeof(cfg->host_uuid), "%s", val);
+        else if (!strcmp(key, "host_name"))
+            snprintf(cfg->host_name, sizeof(cfg->host_name), "%s", val);
         else
             LOGW("config: clave desconocida '%s'", key);
     }
@@ -314,7 +318,9 @@ int config_save(const app_config_t *cfg, const char *dir) {
             "touchpad_click = %d\n"
             "wifi_keepalive = %s\n"
             "latest_frame = %s\n"
-            "present_late_us = %d\n",
+            "present_late_us = %d\n"
+            "host_uuid = %s\n"
+            "host_name = %s\n",
             cfg->host, (unsigned)cfg->http_port, cfg->app_name,
             cfg->last_app,cfg->reduced_motion?"true":"false",cfg->controller_deadzone,cfg->swap_face_buttons?"true":"false",cfg->debug_host,
             cfg->stream.width, cfg->stream.height, cfg->stream.fps, cfg->stream.bitrate,
@@ -343,7 +349,8 @@ int config_save(const app_config_t *cfg, const char *dir) {
             cfg->vd_scale, cfg->touchpad_click,
             cfg->wifi_keepalive ? "true" : "false",
             cfg->latest_frame ? "true" : "false",
-            cfg->present_late_us);
+            cfg->present_late_us,
+            cfg->host_uuid, cfg->host_name);
     int failed=ferror(f);
     if(fclose(f)!=0)failed=1;
     char destination[512];snprintf(destination,sizeof(destination),"%s/moonlight.ini",dir);

@@ -34,6 +34,12 @@ fi
 clang "${common[@]}" preview/fork_flow_check.c src/config.c src/gamestream/gs_errors.c -Wl,--gc-sections -pthread -o build-tests/fork-flow-check
 build-tests/fork-flow-check
 
+clang "${common[@]}" preview/relocate_check.c src/gamestream/discovery.c src/gamestream/mdns_legacy.c -pthread -o build-tests/relocate-check
+build-tests/relocate-check
+
+clang "${common[@]}" preview/guide_chord_check.c -o build-tests/guide-chord-check
+build-tests/guide-chord-check
+
 clang "${common[@]}" preview/quick_menu_check.c src/ui/quick_menu.c -pthread -o build-tests/quick-menu-check
 build-tests/quick-menu-check
 

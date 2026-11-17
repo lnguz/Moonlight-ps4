@@ -29,7 +29,7 @@
 #define CONFIG_DIR "."
 #endif
 
-#define VERSION_STR "1.4.2"
+#define VERSION_STR "1.4.3"
 
 #ifdef __ORBIS__
 /* Terminate the process with SYS_exit directly. PS4's kernel is FreeBSD 9

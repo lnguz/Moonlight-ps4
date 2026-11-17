@@ -766,6 +766,9 @@ static void osk_accept(ui_state_t *st) {
     st->notice[0] = 0;
     if (st->osk_target == SET_HOST) {
         if (strcmp(st->cfg->host, st->osk_buf) != 0) {
+            /* Another address may be another PC: forget the old identity. */
+            st->cfg->host_uuid[0] = 0;
+            st->cfg->host_name[0] = 0;
             snprintf(st->cfg->host, sizeof(st->cfg->host), "%s", st->osk_buf);
             st->cfg->http_port = 47989;
             st->cfg->last_app[0]=0;
@@ -1166,7 +1169,7 @@ static void pcs_input(ui_state_t *st, unsigned pr) {
     if (pr & MENU_BTN_CROSS) {
         if (st->nhosts) {
             mdns_host_t *h = &st->hosts[st->sel_host];
-            if(strcmp(st->cfg->host,h->address))st->cfg->last_app[0]=0;
+            if(strcmp(st->cfg->host,h->address)){st->cfg->last_app[0]=0;st->cfg->host_uuid[0]=0;st->cfg->host_name[0]=0;}
             snprintf(st->cfg->host, sizeof(st->cfg->host), "%s", h->address);
             st->cfg->http_port = h->port;
             save_cfg(st);

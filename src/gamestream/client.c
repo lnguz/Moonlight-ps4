@@ -283,6 +283,15 @@ static int load_serverinfo(gs_server_t *server, bool https) {
 
     if (https)
         parse_apollo_fields(server, resp.body, resp.len);
+    {
+        char *hu = NULL, *hn = NULL;
+        if (xml_search(resp.body, resp.len, "uniqueid", &hu) == GS_OK && hu)
+            snprintf(server->hostUuid, sizeof(server->hostUuid), "%s", hu);
+        if (xml_search(resp.body, resp.len, "hostname", &hn) == GS_OK && hn)
+            snprintf(server->hostName, sizeof(server->hostName), "%s", hn);
+        free(hu);
+        free(hn);
+    }
 
     server->paired = !strcmp(paired, "1");
     server->currentGame = atoi(currentGame);

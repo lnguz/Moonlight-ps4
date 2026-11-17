@@ -84,10 +84,16 @@ static int s_latest_frame;
 static uint64_t s_late_us = 33000;
 static unsigned s_diag_newer_drops;
 
-/* A frame "is late" once it waited more than s_late_us in our queue. */
+/* A frame "is late" once it waited more than s_late_us in our queue. It
+ * is only worth hiding when a newer frame is already queued behind it:
+ * when the hardware decoder runs close to its budget (big frames in busy
+ * scenes, ~15-20 ms at 25-50 Mbps), EVERY frame ends up late, and hiding
+ * them all froze the picture at 1-2 fps (field logs, 1.4.2). The newest
+ * frame is always shown, late or not. */
 static int frame_is_late(const DECODE_UNIT *du, uint64_t now) {
     return s_late_us && du->enqueueTimeUs && now >= du->enqueueTimeUs &&
-           now - du->enqueueTimeUs > s_late_us;
+           now - du->enqueueTimeUs > s_late_us &&
+           LiGetPendingVideoFrames() > 0;
 }
 
 static uint8_t s_sps_scratch[256];
@@ -830,6 +836,11 @@ static int dr_submit_impl(PDECODE_UNIT du) {
         uint64_t age=du->enqueueTimeUs&&kick_now>=du->enqueueTimeUs?
                      kick_now-du->enqueueTimeUs:0;
         uint32_t wait_limit=ml_present_wait_budget(age,8000);
+        /* An old frame with nothing newer queued is still the freshest
+         * picture we have: show it, but only into an already free buffer
+         * (short bounded wait) instead of dropping it. */
+        if(!wait_limit && LiGetPendingVideoFrames()==0)
+            wait_limit=2000;
         if(wait_limit) {
             (void)video_present_bgra_pipe_kick(src,uv,pitch_y,pitch_uv,
                                                disp_w,disp_h,wait_limit);

@@ -43,6 +43,9 @@ typedef struct {
      * nobody types 12 hex digits by hand. Empty = host did not report. */
     char host_mac[24]; // "AA:BB:CC:DD:EE:FF"
 
+    char hostUuid[64];      // <uniqueid>: stable PC identity (IP may change)
+    char hostName[64];      // <hostname>
+
     /* Apollo: present only in the paired HTTPS serverinfo. */
     bool isApollo;          // host sent <Permission> (Apollo-only tag)
     bool vdisplayCapable;   // <VirtualDisplayCapable>true

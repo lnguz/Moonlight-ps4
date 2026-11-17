@@ -38,3 +38,15 @@ PCs and settings).
 
 New INI keys: `device_name`, `virtual_display`, `vd_scale`, `touchpad_click`,
 `wifi_keepalive`, `latest_frame`, `present_late_us`.
+
+## 1.4.3
+- **No more slideshow at high bitrate**: a late frame is only hidden when a
+  newer frame is already queued. Before, when the hardware decoder ran close
+  to its 16.7 ms budget (busy scenes at 25-50 Mbps), every frame counted as
+  late and the picture dropped to 1-2 fps.
+- **Home hold**: L1 + R1 + Options now holds Guide for as long as the chord is
+  held (long press menus), and at least 80 ms on a tap.
+- **PC IP change**: the PC's `<uniqueid>`/hostname is saved after each connect
+  (`host_uuid`, `host_name`). When the saved address stops answering, the 128
+  nearest addresses are probed in parallel and the same PC is followed to its
+  new address automatically.

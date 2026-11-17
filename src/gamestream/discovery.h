@@ -95,6 +95,15 @@ void scan_job_finish(scan_job_t **j);
 
 int mdns_discover(mdns_host_t *hosts,int capacity,int timeout_ms);
 
+/* Find the saved PC after its IP changed (router DHCP). Probes up to 128
+ * addresses nearest to old_ip in the same /24, all in parallel (see
+ * discovery.c), and accepts only a host whose /serverinfo <uniqueid>
+ * equals want_uuid (or, when no uuid was learned yet, whose <hostname>
+ * equals want_name). Waits at most timeout_ms. Returns 0 and the new
+ * address in out_ip (>= 16 bytes) on success, -1 otherwise. */
+int host_relocate(const char *old_ip, const char *want_uuid, const char *want_name,
+                  char *out_ip, size_t out_cap, int timeout_ms);
+
 #define MDNS_MAX_ADDRS 32
 #define MDNS_SERVICE "_nvstream._tcp.local"
 typedef struct {

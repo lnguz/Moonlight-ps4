@@ -28,7 +28,11 @@ static inline int guide_chord_filter(guide_chord_t *state, int buttons, uint64_t
         state->phase = GUIDE_DRAIN;
         return 0;
     case GUIDE_PULSE:
-        if (now < state->release_us && !(buttons & TOUCHPAD_FLAG))
+        /* Guide stays down while the whole chord is held (long press for
+         * Steam / Game Bar menus), and for at least 80 ms on a quick tap
+         * so the host never misses it. */
+        if (!(buttons & TOUCHPAD_FLAG) &&
+            (now < state->release_us || (buttons & chord) == chord))
             return SPECIAL_FLAG;
         state->phase = GUIDE_DRAIN;
         return 0;
